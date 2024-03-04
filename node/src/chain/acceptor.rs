@@ -49,7 +49,7 @@ pub(crate) enum RevertTarget {
 /// Acceptor also manages the initialization and lifespan of Consensus task.
 pub(crate) struct Acceptor<N: Network, DB: database::DB, VM: vm::VMExecution> {
     /// Most recently accepted block a.k.a blockchain tip
-    mrb: RwLock<BlockWithLabel>,
+    mrb: Arc<RwLock<BlockWithLabel>>,
 
     /// Provisioners needed to verify next block
     pub(crate) provisioners_list: RwLock<ContextProvisioners>,
@@ -137,7 +137,7 @@ impl<DB: database::DB, VM: vm::VMExecution, N: Network> Acceptor<N, DB, VM> {
         }
 
         let acc = Self {
-            mrb: RwLock::new(mrb),
+            mrb: Arc::new(RwLock::new(mrb)),
             provisioners_list: RwLock::new(provisioners_list),
             db: db.clone(),
             vm: vm.clone(),

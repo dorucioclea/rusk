@@ -112,6 +112,7 @@ pub struct DataSources {
 impl HandleRequest for DataSources {
     async fn handle(
         &self,
+        base_commit: [u8; 32],
         request: &MessageRequest,
     ) -> anyhow::Result<ResponseData> {
         info!(
@@ -125,14 +126,14 @@ impl HandleRequest for DataSources {
             (_, "rusk", topic) | (_, "prover", topic)
                 if topic.starts_with("prove_") =>
             {
-                self.prover.handle(request).await
+                self.prover.handle(base_commit, request).await
             }
             #[cfg(feature = "node")]
             (Target::Contract(_), ..) | (_, "rusk", _) => {
-                self.rusk.handle(request).await
+                self.rusk.handle(base_commit, request).await
             }
             #[cfg(feature = "node")]
-            (_, "Chain", _) => self.node.handle(request).await,
+            (_, "Chain", _) => self.node.handle(base_commit, request).await,
             _ => Err(anyhow::anyhow!("unsupported target type")),
         }
     }
@@ -301,6 +302,7 @@ async fn handle_stream<H: HandleRequest>(
                     Ok(mut req) => {
                         req.event.target=target.clone();
                         task::spawn(handle_execution(
+                            base_commit,
                             sources.clone(),
                             req,
                             responder.clone(),
@@ -412,6 +414,7 @@ where
 }
 
 async fn handle_execution<H>(
+    base_commit: [u8; 32],
     sources: Arc<H>,
     request: MessageRequest,
     responder: mpsc::UnboundedSender<EventResponse>,
@@ -419,7 +422,7 @@ async fn handle_execution<H>(
     H: HandleRequest,
 {
     let mut rsp = sources
-        .handle(&request)
+        .handle(base_commit, &request)
         .await
         .map(|data| {
             let (data, mut headers) = data.into_inner();
@@ -440,6 +443,7 @@ async fn handle_execution<H>(
 pub trait HandleRequest: Send + Sync + 'static {
     async fn handle(
         &self,
+        base_commit: [u8; 32],
         request: &MessageRequest,
     ) -> anyhow::Result<ResponseData>;
 }
@@ -468,6 +472,7 @@ mod tests {
     impl HandleRequest for TestHandle {
         async fn handle(
             &self,
+            base_commit: [u8; 32],
             request: &MessageRequest,
         ) -> anyhow::Result<ResponseData> {
             let response = match request.event.to_route() {

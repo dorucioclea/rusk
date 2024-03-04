@@ -12,6 +12,7 @@ use super::*;
 impl HandleRequest for LocalProver {
     async fn handle(
         &self,
+        base_commit: [u8; 32],
         request: &MessageRequest,
     ) -> anyhow::Result<ResponseData> {
         let topic = request.event.topic.as_str();

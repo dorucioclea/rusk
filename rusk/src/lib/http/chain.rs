@@ -51,6 +51,7 @@ fn variables_from_request(request: &MessageRequest) -> Variables {
 impl HandleRequest for RuskNode {
     async fn handle(
         &self,
+        base_commit: [u8; 32],
         request: &MessageRequest,
     ) -> anyhow::Result<ResponseData> {
         match &request.event.to_route() {

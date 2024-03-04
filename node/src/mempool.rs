@@ -7,7 +7,7 @@
 use crate::database::{Ledger, Mempool};
 use crate::{database, vm, LongLivedService, Message, Network};
 use async_trait::async_trait;
-use node_data::ledger::Transaction;
+use node_data::ledger::{BlockWithLabel, Transaction};
 use node_data::message::{AsyncQueue, Payload, Topics};
 use std::sync::Arc;
 use thiserror::Error;
@@ -36,8 +36,8 @@ impl From<anyhow::Error> for TxAcceptanceError {
     }
 }
 
-#[derive(Default)]
 pub struct MempoolSrv {
+    mrb: Arc<RwLock<BlockWithLabel>>,
     inbound: AsyncQueue<Message>,
 }
 
@@ -123,7 +123,10 @@ impl MempoolSrv {
         tx: &Transaction,
     ) -> Result<(), TxAcceptanceError> {
         // VM Preverify call
-        if let Err(e) = vm.read().await.preverify(tx) {
+        let mrb = self.mrb.read().await;
+        let base_commit = mrb.inner().header().state_hash;
+
+        if let Err(e) = vm.read().await.preverify(base_commit, tx) {
             Err(TxAcceptanceError::VerificationFailed(format!("{e:?}")))?;
         }
 

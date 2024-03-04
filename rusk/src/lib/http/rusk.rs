@@ -25,18 +25,19 @@ const RUSK_FEEDER_HEADER: &str = "Rusk-Feeder";
 impl HandleRequest for Rusk {
     async fn handle(
         &self,
+        base_commit: [u8; 32],
         request: &MessageRequest,
     ) -> anyhow::Result<ResponseData> {
         match &request.event.to_route() {
             (Target::Contract(_), ..) => {
                 let feeder = request.header(RUSK_FEEDER_HEADER).is_some();
-                self.handle_contract_query(&request.event, feeder)
+                self.handle_contract_query(base_commit, &request.event, feeder)
             }
             (Target::Host(_), "rusk", "preverify") => {
-                self.handle_preverify(request.event_data())
+                self.handle_preverify(base_commit, request.event_data())
             }
             (Target::Host(_), "rusk", "provisioners") => {
-                self.get_provisioners()
+                self.get_provisioners(base_commit)
             }
             (Target::Host(_), "rusk", "crs") => self.get_crs(),
             _ => Err(anyhow::anyhow!("Unsupported")),
@@ -47,6 +48,7 @@ impl HandleRequest for Rusk {
 impl Rusk {
     fn handle_contract_query(
         &self,
+        base_commit: [u8; 32],
         event: &Event,
         feeder: bool,
     ) -> anyhow::Result<ResponseData> {
@@ -66,6 +68,7 @@ impl Rusk {
 
             thread::spawn(move || {
                 rusk.feeder_query_raw(
+                    base_commit,
                     ContractId::from_bytes(contract_bytes),
                     topic,
                     arg,
@@ -76,6 +79,7 @@ impl Rusk {
         } else {
             let data = self
                 .query_raw(
+                    base_commit,
                     ContractId::from_bytes(contract_bytes),
                     event.topic.clone(),
                     event.data.as_bytes(),
@@ -85,16 +89,23 @@ impl Rusk {
         }
     }
 
-    fn handle_preverify(&self, data: &[u8]) -> anyhow::Result<ResponseData> {
+    fn handle_preverify(
+        &self,
+        base_commit: [u8; 32],
+        data: &[u8],
+    ) -> anyhow::Result<ResponseData> {
         let tx = phoenix_core::Transaction::from_slice(data)
             .map_err(|e| anyhow::anyhow!("Invalid Data {e:?}"))?;
-        self.preverify(&tx.into())?;
+        self.preverify(base_commit, &tx.into())?;
         Ok(ResponseData::new(DataType::None))
     }
 
-    fn get_provisioners(&self) -> anyhow::Result<ResponseData> {
+    fn get_provisioners(
+        &self,
+        base_commit: [u8; 32],
+    ) -> anyhow::Result<ResponseData> {
         let prov: Vec<_> = self
-            .provisioners(None)
+            .provisioners(base_commit)
             .expect("Cannot query state for provisioners")
             .filter_map(|(key, stake)| {
                 let key = bs58::encode(key.to_bytes()).into_string();
