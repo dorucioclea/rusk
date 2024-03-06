@@ -591,7 +591,17 @@ impl<DB: database::DB, VM: vm::VMExecution, N: Network> Acceptor<N, DB, VM> {
 
                 anyhow::Ok(state_hash)
             }
-            RevertTarget::LastEpoch => unimplemented!(),
+            RevertTarget::LastEpoch => {
+                let vm = self.vm.read().await;
+                let state_hash = vm.revert_to_epoch()?;
+
+                info!(
+                    event = "vm reverted",
+                    state_root = hex::encode(state_hash),
+                );
+
+                anyhow::Ok(state_hash)
+            }
         }?;
 
         // Delete any block until we reach the target_state_hash, the
