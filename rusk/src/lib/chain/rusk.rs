@@ -397,13 +397,16 @@ impl Rusk {
         tip.current = commit;
         tip.base = commit;
 
+        let f = commit_retain_closure(
+            [current_commit, base_commit, commit],
+            tip.epoch,
+        );
+
         // We will delete all commits except the previous base commit, the
         // previous current commit, the new commit and the epoch commit - if it
         // exists.
         let mut commits_to_delete = self.vm.commits();
-        commits_to_delete.retain(|c| {
-            *c != current_commit && *c != base_commit && *c != commit
-        });
+        commits_to_delete.retain(f);
 
         // Delete all commits except the previous base commit, and the current
         // commit. Deleting commits is blocking, meaning it will wait until any
@@ -414,6 +417,18 @@ impl Rusk {
         task::spawn(delete_commits(self.vm.clone(), commits_to_delete));
 
         Ok(())
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn commit_retain_closure<const N: usize>(
+    commits: [[u8; 32]; N],
+    epoch: Option<[u8; 32]>,
+) -> Box<dyn Fn(&[u8; 32]) -> bool> {
+    if let Some(epoch) = epoch {
+        Box::new(move |c| !commits.contains(c) && *c != epoch)
+    } else {
+        Box::new(move |c| !commits.contains(c))
     }
 }
 
