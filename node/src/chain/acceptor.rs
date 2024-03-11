@@ -603,6 +603,7 @@ impl<DB: database::DB, VM: vm::VMExecution, N: Network> Acceptor<N, DB, VM> {
                 info!(
                     event = "vm reverted",
                     state_root = hex::encode(state_hash),
+                    label = "last_epoch"
                 );
 
                 anyhow::Ok(state_hash)
