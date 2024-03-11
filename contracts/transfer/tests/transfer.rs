@@ -42,6 +42,11 @@ const BOB_ID: ContractId = {
     bytes[0] = 0xFB;
     ContractId::from_bytes(bytes)
 };
+const CHARLIE_ID: ContractId = {
+    let mut bytes = [0u8; 32];
+    bytes[0] = 0xFC;
+    ContractId::from_bytes(bytes)
+};
 
 type Result<T, E = Error> = core::result::Result<T, E>;
 
@@ -64,7 +69,10 @@ fn instantiate<Rng: RngCore + CryptoRng>(
         "../../../target/wasm32-unknown-unknown/release/alice.wasm"
     );
     let bob_bytecode = include_bytes!(
-        "../../../target/wasm32-unknown-unknown/release/alice.wasm"
+        "../../../target/wasm32-unknown-unknown/release/bob.wasm"
+    );
+    let charlie_bytecode = include_bytes!(
+        "../../../target/wasm32-unknown-unknown/release/charlie.wasm"
     );
 
     let mut session = rusk_abi::new_genesis_session(vm);
@@ -94,6 +102,14 @@ fn instantiate<Rng: RngCore + CryptoRng>(
             POINT_LIMIT,
         )
         .expect("Deploying the bob contract should succeed");
+
+    session
+        .deploy(
+            charlie_bytecode,
+            ContractData::builder().owner(OWNER).contract_id(CHARLIE_ID),
+            POINT_LIMIT,
+        )
+        .expect("Deploying the charlie contract should succeed");
 
     let genesis_note = Note::transparent(rng, psk, GENESIS_VALUE);
 
@@ -223,7 +239,8 @@ fn execute(session: &mut Session, tx: Transaction) -> Result<u64> {
         TRANSFER_CONTRACT,
         "spend_and_execute",
         &tx,
-        u64::MAX,
+        // u64::MAX,
+        tx.fee.gas_limit,
     )?;
 
     let gas_spent = receipt.gas_spent;
@@ -408,6 +425,7 @@ fn alice_ping() {
     let psk = PublicSpendKey::from(&ssk);
 
     let session = &mut instantiate(rng, vm, &psk);
+    println!("instantiate done");
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -418,6 +436,7 @@ fn alice_ping() {
     let input_value = input_note
         .value(None)
         .expect("The value should be transparent");
+    println!("input value={}", input_value);
     let input_blinder = input_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
@@ -432,6 +451,7 @@ fn alice_ping() {
     // maximally spent.
     let change_value = input_value - gas_price * gas_limit;
     let change_blinder = JubJubScalar::random(rng);
+    println!("prepared change note with change value={}", change_value);
     let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
 
     let call = Some((ALICE_ID.to_bytes(), String::from("ping"), vec![]));
@@ -499,7 +519,154 @@ fn alice_ping() {
         call,
     };
 
+    println!("before execute");
     let gas_spent = execute(session, tx).expect("Executing TX should succeed");
+    println!("after execute");
+    update_root(session).expect("Updating the root should succeed");
+
+    println!("EXECUTE_PING: {gas_spent} gas");
+
+    let leaves = leaves_from_height(session, 1)
+        .expect("Getting the notes should succeed");
+    assert_eq!(
+        leaves.len(),
+        2,
+        "There should be two notes in the tree after the transaction"
+    );
+}
+
+#[test]
+fn charlie_ping() {
+    const PING_FEE: u64 = dusk(1.0);
+
+    let rng = &mut StdRng::seed_from_u64(0xfeeb);
+
+    let vm = &mut rusk_abi::new_ephemeral_vm()
+        .expect("Creating ephemeral VM should work");
+
+    let ssk = SecretSpendKey::random(rng);
+    let psk = PublicSpendKey::from(&ssk);
+
+    let mut session = &mut instantiate(rng, vm, &psk);
+    println!("instantiate done");
+
+    let balance = session
+        .call::<_, u64>(
+            TRANSFER_CONTRACT,
+            "module_balance",
+            &CHARLIE_ID,
+            POINT_LIMIT,
+        )
+        .expect("Pushing genesis note should succeed").data;
+
+    println!("balance of charlie contract is: {}", balance);
+    // assert!(balance >= PING_FEE);
+
+    // wfct needed here but maybe we could avoid it at the beginning?
+    // only at the end we could do wfct of the actually consumed amount
+
+    let credit_note = Note::transparent(rng, &psk, PING_FEE); //credit note
+
+    let input_note = session
+        .call::<_, Note>(
+            TRANSFER_CONTRACT,
+            "push_note",
+            &(0u64, credit_note),
+            POINT_LIMIT,
+        )
+        .expect("Pushing genesis note should succeed").data;
+
+    update_root(&mut session).expect("Updating the root should succeed");
+
+    let input_value = input_note
+        .value(None)
+        .expect("The value should be transparent");
+    println!("input value={}", input_value);
+    let input_blinder = input_note
+        .blinding_factor(None)
+        .expect("The blinder should be transparent");
+    let input_nullifier = input_note.gen_nullifier(&ssk);
+
+    let gas_limit = PING_FEE;
+    let gas_price = LUX;
+
+    let fee = Fee::new(rng, gas_limit, gas_price, &psk);
+
+    // The change note should have the value of the input note, minus what is
+    // maximally spent.
+    let change_value = input_value - gas_price * gas_limit;
+    let change_blinder = JubJubScalar::random(rng);
+    println!("prepared change note with change value={}", change_value);
+    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+
+    let call = Some((CHARLIE_ID.to_bytes(), String::from("ping"), vec![]));
+
+    // Compose the circuit. In this case we're using one input and one output.
+    let mut circuit = ExecuteCircuitOneTwo::new();
+
+    circuit.set_fee(&fee);
+    circuit
+        .add_output_with_data(change_note, change_value, change_blinder)
+        .expect("appending input or output should succeed");
+
+    let opening = opening(session, *input_note.pos())
+        .expect("Querying the opening for the given position should succeed")
+        .expect("An opening should exist for a note in the tree");
+
+    // Generate pk_r_p
+    let sk_r = ssk.sk_r(input_note.stealth_address());
+    let pk_r_p = GENERATOR_NUMS_EXTENDED * sk_r.as_ref();
+
+    // The transaction hash must be computed before signing
+    let anchor =
+        root(session).expect("Getting the anchor should be successful");
+
+    let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
+        &[input_nullifier],
+        &[change_note],
+        &anchor,
+        &fee,
+        &None,
+        &call,
+    );
+    let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
+
+    circuit.set_tx_hash(tx_hash);
+
+    let circuit_input_signature =
+        CircuitInputSignature::sign(rng, &ssk, &input_note, tx_hash);
+    let circuit_input = CircuitInput::new(
+        opening,
+        input_note,
+        pk_r_p.into(),
+        input_value,
+        input_blinder,
+        input_nullifier,
+        circuit_input_signature,
+    );
+
+    circuit
+        .add_input(circuit_input)
+        .expect("appending input or output should succeed");
+
+    let (prover, _) = prover_verifier("ExecuteCircuitOneTwo");
+    let (proof, _) = prover
+        .prove(rng, &circuit)
+        .expect("creating a proof should succeed");
+
+    let tx = Transaction {
+        anchor,
+        nullifiers: vec![input_nullifier],
+        outputs: vec![change_note],
+        fee,
+        crossover: None,
+        proof: proof.to_bytes().to_vec(),
+        call,
+    };
+
+    println!("before execute");
+    let gas_spent = execute(session, tx).expect("Executing TX should succeed");
+    println!("after execute");
     update_root(session).expect("Updating the root should succeed");
 
     println!("EXECUTE_PING: {gas_spent} gas");

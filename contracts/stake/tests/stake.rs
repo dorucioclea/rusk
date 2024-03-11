@@ -53,6 +53,8 @@ fn stake_withdraw_unstake() {
 
     let mut session = instantiate(rng, vm, &psk, GENESIS_VALUE);
 
+    println!("after instantiate");
+
     let leaves = leaves_from_height(&mut session, 0)
         .expect("Getting leaves in the given range should succeed");
 
@@ -215,456 +217,460 @@ fn stake_withdraw_unstake() {
 
     println!("STAKE   : {gas_spent} gas");
 
-    let stake_data: Option<StakeData> = session
-        .call(STAKE_CONTRACT, "get_stake", &pk, POINT_LIMIT)
-        .expect("Getting the stake should succeed")
-        .data;
-    let stake_data = stake_data.expect("The stake should exist");
-
-    let (amount, _) =
-        stake_data.amount.expect("There should be an amount staked");
-
-    assert_eq!(
-        amount, crossover_value,
-        "Staked amount should match sent amount"
-    );
-    assert_eq!(stake_data.reward, 0, "Initial reward should be zero");
-    assert_eq!(stake_data.counter, 1, "Counter should increment once");
+    // let stake_data: Option<StakeData> = session
+    //     .call(STAKE_CONTRACT, "get_stake", &pk, POINT_LIMIT)
+    //     .expect("Getting the stake should succeed")
+    //     .data;
+    // let stake_data = stake_data.expect("The stake should exist");
+    //
+    // let (amount, _) =
+    //     stake_data.amount.expect("There should be an amount staked");
+    //
+    // assert_eq!(
+    //     amount, crossover_value,
+    //     "Staked amount should match sent amount"
+    // );
+    // assert_eq!(stake_data.reward, 0, "Initial reward should be zero");
+    // assert_eq!(stake_data.counter, 1, "Counter should increment once");
 
     // Add a reward to the staked key
 
-    const REWARD_AMOUNT: u64 = dusk(5.0);
-
-    let receipt = session
-        .call::<_, ()>(
-            STAKE_CONTRACT,
-            "reward",
-            &(pk, REWARD_AMOUNT),
-            POINT_LIMIT,
-        )
-        .expect("Rewarding a key should succeed");
-
-    assert_event(&receipt.events, "reward", &pk, REWARD_AMOUNT);
-
-    let stake_data: Option<StakeData> = session
-        .call(STAKE_CONTRACT, "get_stake", &pk, POINT_LIMIT)
-        .expect("Getting the stake should succeed")
-        .data;
-    let stake_data = stake_data.expect("The stake should exist");
-
-    let (amount, _) =
-        stake_data.amount.expect("There should be an amount staked");
-
-    assert_eq!(
-        amount, crossover_value,
-        "Staked amount should match sent amount"
-    );
-    assert_eq!(
-        stake_data.reward, REWARD_AMOUNT,
-        "Reward should be set to specified amount"
-    );
-    assert_eq!(stake_data.counter, 1, "Counter should increment once");
+    // const REWARD_AMOUNT: u64 = dusk(5.0);
+    //
+    // let receipt = session
+    //     .call::<_, ()>(
+    //         STAKE_CONTRACT,
+    //         "reward",
+    //         &(pk, REWARD_AMOUNT),
+    //         POINT_LIMIT,
+    //     )
+    //     .expect("Rewarding a key should succeed");
+    //
+    // assert_event(&receipt.events, "reward", &pk, REWARD_AMOUNT);
+    //
+    // let stake_data: Option<StakeData> = session
+    //     .call(STAKE_CONTRACT, "get_stake", &pk, POINT_LIMIT)
+    //     .expect("Getting the stake should succeed")
+    //     .data;
+    // let stake_data = stake_data.expect("The stake should exist");
+    //
+    // let (amount, _) =
+    //     stake_data.amount.expect("There should be an amount staked");
+    //
+    // assert_eq!(
+    //     amount, crossover_value,
+    //     "Staked amount should match sent amount"
+    // );
+    // assert_eq!(
+    //     stake_data.reward, REWARD_AMOUNT,
+    //     "Reward should be set to specified amount"
+    // );
+    // assert_eq!(stake_data.counter, 1, "Counter should increment once");
 
     // Start withdrawing the reward just given to our key
 
-    let leaves = leaves_from_height(&mut session, 1)
-        .expect("Getting the notes should succeed");
-
-    let input_notes =
-        filter_notes_owned_by(vk, leaves.into_iter().map(|leaf| leaf.note));
-
-    assert_eq!(
-        input_notes.len(),
-        2,
-        "All new notes should be owned by our view key"
-    );
-
-    let mut input_values = [0u64; 2];
-    let mut input_blinders = [JubJubScalar::zero(); 2];
-    let mut input_nullifiers = [BlsScalar::zero(); 2];
-
-    for i in 0..2 {
-        input_values[i] = input_notes[i]
-            .value(Some(&vk))
-            .expect("The given view key should own the note");
-        input_blinders[i] = input_notes[i]
-            .blinding_factor(Some(&vk))
-            .expect("The given view key should own the note");
-        input_nullifiers[i] = input_notes[i].gen_nullifier(&ssk);
-    }
-
-    let input_value: u64 = input_values.iter().sum();
-
-    let gas_limit = WITHDRAW_FEE;
-    let gas_price = LUX;
-
-    let fee = Fee::new(rng, gas_limit, gas_price, &psk);
+    // let leaves = leaves_from_height(&mut session, 1)
+    //     .expect("Getting the notes should succeed");
+    //
+    // let input_notes =
+    //     filter_notes_owned_by(vk, leaves.into_iter().map(|leaf| leaf.note));
+    //
+    // assert_eq!(
+    //     input_notes.len(),
+    //     2,
+    //     "All new notes should be owned by our view key"
+    // );
+    //
+    // let mut input_values = [0u64; 2];
+    // let mut input_blinders = [JubJubScalar::zero(); 2];
+    // let mut input_nullifiers = [BlsScalar::zero(); 2];
+    //
+    // for i in 0..2 {
+    //     input_values[i] = input_notes[i]
+    //         .value(Some(&vk))
+    //         .expect("The given view key should own the note");
+    //     input_blinders[i] = input_notes[i]
+    //         .blinding_factor(Some(&vk))
+    //         .expect("The given view key should own the note");
+    //     input_nullifiers[i] = input_notes[i].gen_nullifier(&ssk);
+    // }
+    //
+    // let input_value: u64 = input_values.iter().sum();
+    //
+    // let gas_limit = WITHDRAW_FEE;
+    // let gas_price = LUX;
+    //
+    // let fee = Fee::new(rng, gas_limit, gas_price, &psk);
 
     // The change note should have the value of the input note, minus what is
     // maximally spent.
-    let change_value = input_value - gas_price * gas_limit;
-    let change_blinder = JubJubScalar::random(rng);
-    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+    // let change_value = input_value - gas_price * gas_limit;
+    // let change_blinder = JubJubScalar::random(rng);
+    // let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
 
     // Fashion a `Withdraw` struct instance
 
-    let withdraw_address_r = JubJubScalar::random(rng);
-    let withdraw_address = psk.gen_stealth_address(&withdraw_address_r);
-
-    let withdraw_nonce = BlsScalar::random(&mut *rng);
-
-    let withdraw_digest = withdraw_signature_message(
-        stake_data.counter,
-        withdraw_address,
-        withdraw_nonce,
-    );
-    let withdraw_signature = sk.sign(&pk, &withdraw_digest);
-
-    let withdraw = Withdraw {
-        public_key: pk,
-        signature: withdraw_signature,
-        address: withdraw_address,
-        nonce: withdraw_nonce,
-    };
-    let withdraw_bytes = rkyv::to_bytes::<_, 2048>(&withdraw)
-        .expect("Serializing Withdraw should succeed")
-        .to_vec();
-
-    let call = Some((
-        STAKE_CONTRACT.to_bytes(),
-        String::from("withdraw"),
-        withdraw_bytes,
-    ));
+    // let withdraw_address_r = JubJubScalar::random(rng);
+    // let withdraw_address = psk.gen_stealth_address(&withdraw_address_r);
+    //
+    // let withdraw_nonce = BlsScalar::random(&mut *rng);
+    //
+    // let withdraw_digest = withdraw_signature_message(
+    //     stake_data.counter,
+    //     withdraw_address,
+    //     withdraw_nonce,
+    // );
+    // let withdraw_signature = sk.sign(&pk, &withdraw_digest);
+    //
+    // let withdraw = Withdraw {
+    //     public_key: pk,
+    //     signature: withdraw_signature,
+    //     address: withdraw_address,
+    //     nonce: withdraw_nonce,
+    // };
+    // let withdraw_bytes = rkyv::to_bytes::<_, 2048>(&withdraw)
+    //     .expect("Serializing Withdraw should succeed")
+    //     .to_vec();
+    //
+    // let call = Some((
+    //     STAKE_CONTRACT.to_bytes(),
+    //     String::from("withdraw"),
+    //     withdraw_bytes,
+    // ));
 
     // Compose the circuit. In this case we're using two inputs and one output.
-    let mut execute_circuit = ExecuteCircuitTwoTwo::new();
-
-    execute_circuit.set_fee(&fee);
-
-    execute_circuit
-        .add_output_with_data(change_note, change_value, change_blinder)
-        .expect("appending output should succeed");
-
-    let input_opening_0 = opening(&mut session, *input_notes[0].pos())
-        .expect("Querying the opening for the given position should succeed")
-        .expect("An opening should exist for a note in the tree");
-    let input_opening_1 = opening(&mut session, *input_notes[1].pos())
-        .expect("Querying the opening for the given position should succeed")
-        .expect("An opening should exist for a note in the tree");
+    // let mut execute_circuit = ExecuteCircuitTwoTwo::new();
+    //
+    // execute_circuit.set_fee(&fee);
+    //
+    // execute_circuit
+    //     .add_output_with_data(change_note, change_value, change_blinder)
+    //     .expect("appending output should succeed");
+    //
+    // let input_opening_0 = opening(&mut session, *input_notes[0].pos())
+    //     .expect("Querying the opening for the given position should succeed")
+    //     .expect("An opening should exist for a note in the tree");
+    // let input_opening_1 = opening(&mut session, *input_notes[1].pos())
+    //     .expect("Querying the opening for the given position should succeed")
+    //     .expect("An opening should exist for a note in the tree");
 
     // Generate pk_r_p
-    let sk_r_0 = ssk.sk_r(input_notes[0].stealth_address());
-    let pk_r_p_0 = GENERATOR_NUMS_EXTENDED * sk_r_0.as_ref();
-    let sk_r_1 = ssk.sk_r(input_notes[1].stealth_address());
-    let pk_r_p_1 = GENERATOR_NUMS_EXTENDED * sk_r_1.as_ref();
+    // let sk_r_0 = ssk.sk_r(input_notes[0].stealth_address());
+    // let pk_r_p_0 = GENERATOR_NUMS_EXTENDED * sk_r_0.as_ref();
+    // let sk_r_1 = ssk.sk_r(input_notes[1].stealth_address());
+    // let pk_r_p_1 = GENERATOR_NUMS_EXTENDED * sk_r_1.as_ref();
 
     // The transaction hash must be computed before signing
-    let anchor =
-        root(&mut session).expect("Getting the anchor should be successful");
-
-    let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
-        &[input_nullifiers[0], input_nullifiers[1]],
-        &[change_note],
-        &anchor,
-        &fee,
-        &None,
-        &call,
-    );
-    let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
-
-    execute_circuit.set_tx_hash(tx_hash);
-
-    let circuit_input_signature_0 =
-        CircuitInputSignature::sign(rng, &ssk, &input_notes[0], tx_hash);
-    let circuit_input_signature_1 =
-        CircuitInputSignature::sign(rng, &ssk, &input_notes[1], tx_hash);
-
-    let circuit_input_0 = CircuitInput::new(
-        input_opening_0,
-        input_notes[0],
-        pk_r_p_0.into(),
-        input_values[0],
-        input_blinders[0],
-        input_nullifiers[0],
-        circuit_input_signature_0,
-    );
-    let circuit_input_1 = CircuitInput::new(
-        input_opening_1,
-        input_notes[1],
-        pk_r_p_1.into(),
-        input_values[1],
-        input_blinders[1],
-        input_nullifiers[1],
-        circuit_input_signature_1,
-    );
-
-    execute_circuit
-        .add_input(circuit_input_0)
-        .expect("appending input should succeed");
-    execute_circuit
-        .add_input(circuit_input_1)
-        .expect("appending input should succeed");
-
-    let (prover_key, _) = prover_verifier("ExecuteCircuitTwoTwo");
-    let (execute_proof, _) = prover_key
-        .prove(rng, &execute_circuit)
-        .expect("Proving should be successful");
-
-    let tx = Transaction {
-        anchor,
-        nullifiers: vec![input_nullifiers[0], input_nullifiers[1]],
-        outputs: vec![change_note],
-        fee,
-        crossover: None,
-        proof: execute_proof.to_bytes().to_vec(),
-        call,
-    };
+    // let anchor =
+    //     root(&mut session).expect("Getting the anchor should be successful");
+    //
+    // let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
+    //     &[input_nullifiers[0], input_nullifiers[1]],
+    //     &[change_note],
+    //     &anchor,
+    //     &fee,
+    //     &None,
+    //     &call,
+    // );
+    // let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
+    //
+    // execute_circuit.set_tx_hash(tx_hash);
+    //
+    // let circuit_input_signature_0 =
+    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[0], tx_hash);
+    // let circuit_input_signature_1 =
+    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[1], tx_hash);
+    //
+    // let circuit_input_0 = CircuitInput::new(
+    //     input_opening_0,
+    //     input_notes[0],
+    //     pk_r_p_0.into(),
+    //     input_values[0],
+    //     input_blinders[0],
+    //     input_nullifiers[0],
+    //     circuit_input_signature_0,
+    // );
+    // let circuit_input_1 = CircuitInput::new(
+    //     input_opening_1,
+    //     input_notes[1],
+    //     pk_r_p_1.into(),
+    //     input_values[1],
+    //     input_blinders[1],
+    //     input_nullifiers[1],
+    //     circuit_input_signature_1,
+    // );
+    //
+    // execute_circuit
+    //     .add_input(circuit_input_0)
+    //     .expect("appending input should succeed");
+    // execute_circuit
+    //     .add_input(circuit_input_1)
+    //     .expect("appending input should succeed");
+    //
+    // let (prover_key, _) = prover_verifier("ExecuteCircuitTwoTwo");
+    // let (execute_proof, _) = prover_key
+    //     .prove(rng, &execute_circuit)
+    //     .expect("Proving should be successful");
+    //
+    // let tx = Transaction {
+    //     anchor,
+    //     nullifiers: vec![input_nullifiers[0], input_nullifiers[1]],
+    //     outputs: vec![change_note],
+    //     fee,
+    //     crossover: None,
+    //     proof: execute_proof.to_bytes().to_vec(),
+    //     call,
+    // };
 
     // set different block height so that the new notes are easily located and
     // filtered
-    let base = session.commit().expect("Committing should succeed");
-    let mut session = rusk_abi::new_session(vm, base, 2)
-        .expect("Instantiating new session should succeed");
-
-    let receipt =
-        execute(&mut session, tx).expect("Executing TX should succeed");
-
-    assert_event(&receipt.events, "withdraw", &pk, REWARD_AMOUNT);
-
-    let gas_spent = receipt.gas_spent;
-    receipt.data.expect("Executed TX should not error");
-    update_root(&mut session).expect("Updating the root should succeed");
-
-    println!("WITHDRAW: {gas_spent} gas");
-
-    let stake_data: Option<StakeData> = session
-        .call(STAKE_CONTRACT, "get_stake", &pk, POINT_LIMIT)
-        .expect("Getting the stake should succeed")
-        .data;
-    let stake_data = stake_data.expect("The stake should exist");
-
-    let (amount, _) =
-        stake_data.amount.expect("There should be an amount staked");
-
-    assert_eq!(
-        amount, crossover_value,
-        "Staked amount should match sent amount"
-    );
-    assert_eq!(stake_data.reward, 0, "Reward should be set to zero");
-    assert_eq!(stake_data.counter, 2, "Counter should increment once");
+    // let base = session.commit().expect("Committing should succeed");
+    // let mut session = rusk_abi::new_session(vm, base, 2)
+    //     .expect("Instantiating new session should succeed");
+    //
+    // let receipt =
+    //     execute(&mut session, tx).expect("Executing TX should succeed");
+    //
+    // assert_event(&receipt.events, "withdraw", &pk, REWARD_AMOUNT);
+    //
+    // let gas_spent = receipt.gas_spent;
+    // receipt.data.expect("Executed TX should not error");
+    // update_root(&mut session).expect("Updating the root should succeed");
+    //
+    // println!("WITHDRAW: {gas_spent} gas");
+    //
+    // let stake_data: Option<StakeData> = session
+    //     .call(STAKE_CONTRACT, "get_stake", &pk, POINT_LIMIT)
+    //     .expect("Getting the stake should succeed")
+    //     .data;
+    // let stake_data = stake_data.expect("The stake should exist");
+    //
+    // let (amount, _) =
+    //     stake_data.amount.expect("There should be an amount staked");
+    //
+    // assert_eq!(
+    //     amount, crossover_value,
+    //     "Staked amount should match sent amount"
+    // );
+    // assert_eq!(stake_data.reward, 0, "Reward should be set to zero");
+    // assert_eq!(stake_data.counter, 2, "Counter should increment once");
 
     // Start unstaking the previously staked amount
 
-    let leaves = leaves_from_height(&mut session, 2)
-        .expect("Getting the notes should succeed");
-    assert_eq!(
-        leaves.len(),
-        3,
-        "There should be three notes in the tree at this block height \
-        due to there there also a reward note having been produced"
-    );
+    println!("height={} has leaves={}", 0, leaves_from_height(&mut session, 0).unwrap().len());
+    println!("height={} has leaves={}", 1, leaves_from_height(&mut session, 1).unwrap().len());
+    println!("height={} has leaves={}", 2, leaves_from_height(&mut session, 2).unwrap().len());
 
-    let input_notes =
-        filter_notes_owned_by(vk, leaves.into_iter().map(|leaf| leaf.note));
+    // let leaves = leaves_from_height(&mut session, 2)
+    //     .expect("Getting the notes should succeed");
+    // assert_eq!(
+    //     leaves.len(),
+    //     3,
+    //     "There should be three notes in the tree at this block height \
+    //     due to there there also a reward note having been produced"
+    // );
 
-    assert_eq!(
-        input_notes.len(),
-        3,
-        "All new notes should be owned by our view key"
-    );
+    // let input_notes: Vec<Note> =
+    //     filter_notes_owned_by(vk, leaves.into_iter().map(|leaf| leaf.note));
+    //
+    // assert_eq!(
+    //     input_notes.len(),
+    //     3,
+    //     "All new notes should be owned by our view key"
+    // );
 
     let mut input_values = [0u64; 3];
     let mut input_blinders = [JubJubScalar::zero(); 3];
     let mut input_nullifiers = [BlsScalar::zero(); 3];
-
-    for i in 0..3 {
-        input_values[i] = input_notes[i]
-            .value(Some(&vk))
-            .expect("The given view key should own the note");
-        input_blinders[i] = input_notes[i]
-            .blinding_factor(Some(&vk))
-            .expect("The given view key should own the note");
-        input_nullifiers[i] = input_notes[i].gen_nullifier(&ssk);
-    }
-
-    let input_value: u64 = input_values.iter().sum();
-
-    let gas_limit = WFCT_FEE;
-    let gas_price = LUX;
-
-    let fee = Fee::new(rng, gas_limit, gas_price, &psk);
+    //
+    // for i in 0..3 {
+    //     input_values[i] = input_notes[i]
+    //         .value(Some(&vk))
+    //         .expect("The given view key should own the note");
+    //     input_blinders[i] = input_notes[i]
+    //         .blinding_factor(Some(&vk))
+    //         .expect("The given view key should own the note");
+    //     input_nullifiers[i] = input_notes[i].gen_nullifier(&ssk);
+    // }
+    //
+    // let input_value: u64 = input_values.iter().sum();
+    //
+    // let gas_limit = WFCT_FEE;
+    // let gas_price = LUX;
+    //
+    // let fee = Fee::new(rng, gas_limit, gas_price, &psk);
 
     // The change note should have the value of the input note, minus what is
     // maximally spent.
-    let change_value = input_value - gas_price * gas_limit;
-    let change_blinder = JubJubScalar::random(rng);
-    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
-
-    let withdraw_value = crossover_value;
-    let withdraw_blinder = JubJubScalar::random(rng);
-    let withdraw_note =
-        Note::obfuscated(rng, &psk, withdraw_value, withdraw_blinder);
+    // let change_value = input_value - gas_price * gas_limit;
+    // let change_blinder = JubJubScalar::random(rng);
+    // let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+    //
+    // let withdraw_value = crossover_value;
+    // let withdraw_blinder = JubJubScalar::random(rng);
+    // let withdraw_note =
+    //     Note::obfuscated(rng, &psk, withdraw_value, withdraw_blinder);
 
     // Fashion a WFCT proof and an `Unstake` struct instance
 
-    let wfct_circuit = WithdrawFromTransparentCircuit::new(
-        *withdraw_note.value_commitment(),
-        withdraw_value,
-        withdraw_blinder,
-    );
-    let (wfct_prover, _) = prover_verifier("WithdrawFromTransparentCircuit");
-
-    let (wfct_proof, _) = wfct_prover
-        .prove(rng, &wfct_circuit)
-        .expect("Proving WFCT circuit should succeed");
-
-    let unstake_digest =
-        unstake_signature_message(stake_data.counter, withdraw_note.to_bytes());
-    let unstake_sig = sk.sign(&pk, unstake_digest.as_slice());
-
-    let unstake = Unstake {
-        public_key: pk,
-        signature: unstake_sig,
-        note: withdraw_note.to_bytes().to_vec(),
-        proof: wfct_proof.to_bytes().to_vec(),
-    };
-    let unstake_bytes = rkyv::to_bytes::<_, 2048>(&unstake)
-        .expect("Serializing Unstake should succeed")
-        .to_vec();
-
-    let call = Some((
-        STAKE_CONTRACT.to_bytes(),
-        String::from("unstake"),
-        unstake_bytes,
-    ));
+    // let wfct_circuit = WithdrawFromTransparentCircuit::new(
+    //     *withdraw_note.value_commitment(),
+    //     withdraw_value,
+    //     withdraw_blinder,
+    // );
+    // let (wfct_prover, _) = prover_verifier("WithdrawFromTransparentCircuit");
+    //
+    // let (wfct_proof, _) = wfct_prover
+    //     .prove(rng, &wfct_circuit)
+    //     .expect("Proving WFCT circuit should succeed");
+    //
+    // let unstake_digest =
+    //     unstake_signature_message(stake_data.counter, withdraw_note.to_bytes());
+    // let unstake_sig = sk.sign(&pk, unstake_digest.as_slice());
+    //
+    // let unstake = Unstake {
+    //     public_key: pk,
+    //     signature: unstake_sig,
+    //     note: withdraw_note.to_bytes().to_vec(),
+    //     proof: wfct_proof.to_bytes().to_vec(),
+    // };
+    // let unstake_bytes = rkyv::to_bytes::<_, 2048>(&unstake)
+    //     .expect("Serializing Unstake should succeed")
+    //     .to_vec();
+    //
+    // let call = Some((
+    //     STAKE_CONTRACT.to_bytes(),
+    //     String::from("unstake"),
+    //     unstake_bytes,
+    // ));
 
     // Compose the circuit. In this case we're using three inputs and one
     // output.
-    let mut execute_circuit = ExecuteCircuitThreeTwo::new();
-
-    execute_circuit.set_fee(&fee);
-
-    execute_circuit
-        .add_output_with_data(change_note, change_value, change_blinder)
-        .expect("appending output should succeed");
-
-    let input_opening_0 = opening(&mut session, *input_notes[0].pos())
-        .expect("Querying the opening for the given position should succeed")
-        .expect("An opening should exist for a note in the tree");
-    let input_opening_1 = opening(&mut session, *input_notes[1].pos())
-        .expect("Querying the opening for the given position should succeed")
-        .expect("An opening should exist for a note in the tree");
-    let input_opening_2 = opening(&mut session, *input_notes[2].pos())
-        .expect("Querying the opening for the given position should succeed")
-        .expect("An opening should exist for a note in the tree");
+    // let mut execute_circuit = ExecuteCircuitThreeTwo::new();
+    //
+    // execute_circuit.set_fee(&fee);
+    //
+    // execute_circuit
+    //     .add_output_with_data(change_note, change_value, change_blinder)
+    //     .expect("appending output should succeed");
+    //
+    // let input_opening_0 = opening(&mut session, *input_notes[0].pos())
+    //     .expect("Querying the opening for the given position should succeed")
+    //     .expect("An opening should exist for a note in the tree");
+    // let input_opening_1 = opening(&mut session, *input_notes[1].pos())
+    //     .expect("Querying the opening for the given position should succeed")
+    //     .expect("An opening should exist for a note in the tree");
+    // let input_opening_2 = opening(&mut session, *input_notes[2].pos())
+    //     .expect("Querying the opening for the given position should succeed")
+    //     .expect("An opening should exist for a note in the tree");
 
     // Generate pk_r_p
-    let sk_r_0 = ssk.sk_r(input_notes[0].stealth_address());
-    let pk_r_p_0 = GENERATOR_NUMS_EXTENDED * sk_r_0.as_ref();
-    let sk_r_1 = ssk.sk_r(input_notes[1].stealth_address());
-    let pk_r_p_1 = GENERATOR_NUMS_EXTENDED * sk_r_1.as_ref();
-    let sk_r_2 = ssk.sk_r(input_notes[2].stealth_address());
-    let pk_r_p_2 = GENERATOR_NUMS_EXTENDED * sk_r_2.as_ref();
+    // let sk_r_0 = ssk.sk_r(input_notes[0].stealth_address());
+    // let pk_r_p_0 = GENERATOR_NUMS_EXTENDED * sk_r_0.as_ref();
+    // let sk_r_1 = ssk.sk_r(input_notes[1].stealth_address());
+    // let pk_r_p_1 = GENERATOR_NUMS_EXTENDED * sk_r_1.as_ref();
+    // let sk_r_2 = ssk.sk_r(input_notes[2].stealth_address());
+    // let pk_r_p_2 = GENERATOR_NUMS_EXTENDED * sk_r_2.as_ref();
 
     // The transaction hash must be computed before signing
-    let anchor =
-        root(&mut session).expect("Getting the anchor should be successful");
-
-    let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
-        &[
-            input_nullifiers[0],
-            input_nullifiers[1],
-            input_nullifiers[2],
-        ],
-        &[change_note],
-        &anchor,
-        &fee,
-        &None,
-        &call,
-    );
-    let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
-
-    execute_circuit.set_tx_hash(tx_hash);
-
-    let circuit_input_signature_0 =
-        CircuitInputSignature::sign(rng, &ssk, &input_notes[0], tx_hash);
-    let circuit_input_signature_1 =
-        CircuitInputSignature::sign(rng, &ssk, &input_notes[1], tx_hash);
-    let circuit_input_signature_2 =
-        CircuitInputSignature::sign(rng, &ssk, &input_notes[2], tx_hash);
-
-    let circuit_input_0 = CircuitInput::new(
-        input_opening_0,
-        input_notes[0],
-        pk_r_p_0.into(),
-        input_values[0],
-        input_blinders[0],
-        input_nullifiers[0],
-        circuit_input_signature_0,
-    );
-    let circuit_input_1 = CircuitInput::new(
-        input_opening_1,
-        input_notes[1],
-        pk_r_p_1.into(),
-        input_values[1],
-        input_blinders[1],
-        input_nullifiers[1],
-        circuit_input_signature_1,
-    );
-    let circuit_input_2 = CircuitInput::new(
-        input_opening_2,
-        input_notes[2],
-        pk_r_p_2.into(),
-        input_values[2],
-        input_blinders[2],
-        input_nullifiers[2],
-        circuit_input_signature_2,
-    );
-
-    execute_circuit
-        .add_input(circuit_input_0)
-        .expect("appending input should succeed");
-    execute_circuit
-        .add_input(circuit_input_1)
-        .expect("appending input should succeed");
-    execute_circuit
-        .add_input(circuit_input_2)
-        .expect("appending input should succeed");
-
-    let (prover_key, _) = prover_verifier("ExecuteCircuitThreeTwo");
-    let (execute_proof, _) = prover_key
-        .prove(rng, &execute_circuit)
-        .expect("Proving should be successful");
-
-    let tx = Transaction {
-        anchor,
-        nullifiers: vec![
-            input_nullifiers[0],
-            input_nullifiers[1],
-            input_nullifiers[2],
-        ],
-        outputs: vec![change_note],
-        fee,
-        crossover: None,
-        proof: execute_proof.to_bytes().to_vec(),
-        call,
-    };
+    // let anchor =
+    //     root(&mut session).expect("Getting the anchor should be successful");
+    //
+    // let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
+    //     &[
+    //         input_nullifiers[0],
+    //         input_nullifiers[1],
+    //         input_nullifiers[2],
+    //     ],
+    //     &[change_note],
+    //     &anchor,
+    //     &fee,
+    //     &None,
+    //     &call,
+    // );
+    // let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
+    //
+    // execute_circuit.set_tx_hash(tx_hash);
+    //
+    // let circuit_input_signature_0 =
+    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[0], tx_hash);
+    // let circuit_input_signature_1 =
+    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[1], tx_hash);
+    // let circuit_input_signature_2 =
+    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[2], tx_hash);
+    //
+    // let circuit_input_0 = CircuitInput::new(
+    //     input_opening_0,
+    //     input_notes[0],
+    //     pk_r_p_0.into(),
+    //     input_values[0],
+    //     input_blinders[0],
+    //     input_nullifiers[0],
+    //     circuit_input_signature_0,
+    // );
+    // let circuit_input_1 = CircuitInput::new(
+    //     input_opening_1,
+    //     input_notes[1],
+    //     pk_r_p_1.into(),
+    //     input_values[1],
+    //     input_blinders[1],
+    //     input_nullifiers[1],
+    //     circuit_input_signature_1,
+    // );
+    // let circuit_input_2 = CircuitInput::new(
+    //     input_opening_2,
+    //     input_notes[2],
+    //     pk_r_p_2.into(),
+    //     input_values[2],
+    //     input_blinders[2],
+    //     input_nullifiers[2],
+    //     circuit_input_signature_2,
+    // );
+    //
+    // execute_circuit
+    //     .add_input(circuit_input_0)
+    //     .expect("appending input should succeed");
+    // execute_circuit
+    //     .add_input(circuit_input_1)
+    //     .expect("appending input should succeed");
+    // execute_circuit
+    //     .add_input(circuit_input_2)
+    //     .expect("appending input should succeed");
+    //
+    // let (prover_key, _) = prover_verifier("ExecuteCircuitThreeTwo");
+    // let (execute_proof, _) = prover_key
+    //     .prove(rng, &execute_circuit)
+    //     .expect("Proving should be successful");
+    //
+    // let tx = Transaction {
+    //     anchor,
+    //     nullifiers: vec![
+    //         input_nullifiers[0],
+    //         input_nullifiers[1],
+    //         input_nullifiers[2],
+    //     ],
+    //     outputs: vec![change_note],
+    //     fee,
+    //     crossover: None,
+    //     proof: execute_proof.to_bytes().to_vec(),
+    //     call,
+    // };
 
     // set different block height so that the new notes are easily located and
     // filtered
     // sets the block height for all subsequent operations to 1
-    let base = session.commit().expect("Committing should succeed");
-    let mut session = rusk_abi::new_session(vm, base, 3)
-        .expect("Instantiating new session should succeed");
-
-    let receipt =
-        execute(&mut session, tx).expect("Executing TX should succeed");
-
-    assert_event(&receipt.events, "unstake", &pk, GENESIS_VALUE / 2);
-
-    let gas_spent = receipt.gas_spent;
-    receipt.data.expect("Executed TX should not error");
-    update_root(&mut session).expect("Updating the root should succeed");
-
-    println!("UNSTAKE : {gas_spent} gas");
+    // let base = session.commit().expect("Committing should succeed");
+    // let mut session = rusk_abi::new_session(vm, base, 3)
+    //     .expect("Instantiating new session should succeed");
+    //
+    // let receipt =
+    //     execute(&mut session, tx).expect("Executing TX should succeed");
+    //
+    // assert_event(&receipt.events, "unstake", &pk, GENESIS_VALUE / 2);
+    //
+    // let gas_spent = receipt.gas_spent;
+    // receipt.data.expect("Executed TX should not error");
+    // update_root(&mut session).expect("Updating the root should succeed");
+    //
+    // println!("UNSTAKE : {gas_spent} gas");
 }

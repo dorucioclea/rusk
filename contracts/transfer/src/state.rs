@@ -72,6 +72,9 @@ impl TransferState {
     }
 
     pub fn send_to_contract_transparent(&mut self, stct: Stct) -> bool {
+        rusk_abi::debug!("stct - crossover={:?}", self.var_crossover);
+        rusk_abi::debug!("stct - value={}", stct.value);
+
         let (crossover, stealth_addr) =
             self.take_crossover().expect("Crossover not present");
 
@@ -110,6 +113,8 @@ impl TransferState {
 
         //  5. C ← C(0,0,0)
         //  Crossover is already taken
+
+        rusk_abi::debug!("balances={:?}", self.balances);
 
         true
     }
@@ -324,6 +329,7 @@ impl TransferState {
         &mut self,
         tx: Transaction,
     ) -> Result<Vec<u8>, ContractError> {
+        rusk_abi::debug!("MMTRANSFER inside spend_and_execute MM");
         //  1. α ∈ R
         if !self.root_exists(&tx.anchor) {
             panic!("Anchor not found in the state!");
@@ -343,6 +349,8 @@ impl TransferState {
         //  5. N↦.append((No.R[], No.pk[])
         //  6. Notes.append(No[])
         let block_height = rusk_abi::block_height();
+        rusk_abi::debug!("MMTRANSFER inside spend_and_execute - extending tree with output notes, num outputs={} block_height={}", tx.outputs.len(), block_height);
+        rusk_abi::debug!("MMTRANSFER inside spend_and_execute - output notes pos={:?}", tx.outputs.iter().map(|note|note.pos()).collect::<Vec<_>>());
         self.tree.extend_notes(block_height, tx.outputs.clone());
 
         //  7. g_l < 2^64
@@ -385,11 +393,13 @@ impl TransferState {
             .value(None)
             .expect("Should always succeed for a transparent note");
 
+        rusk_abi::debug!("MMTRANSFER refund remainder={}", remainder_value);
         if remainder_value > 0 {
             self.push_note(block_height, remainder);
         }
 
         if let Some(crossover) = self.var_crossover {
+            rusk_abi::debug!("MMTRANSFER refund crossover={:?}", crossover);
             let note = Note::from((fee, crossover));
             self.push_note(block_height, note);
         }
@@ -400,6 +410,7 @@ impl TransferState {
     /// Note: the method `update_root` needs to be called after the last note is
     /// pushed.
     pub fn push_note(&mut self, block_height: u64, note: Note) -> Note {
+        rusk_abi::debug!("MMTRANSFER push_note - height={}", block_height);
         let tree_leaf = TreeLeaf { block_height, note };
         let pos = self.tree.push(tree_leaf.clone());
         rusk_abi::emit("TREE_LEAF", (pos, tree_leaf));
@@ -453,6 +464,7 @@ impl TransferState {
         &self,
         nullifiers: Vec<BlsScalar>,
     ) -> Vec<BlsScalar> {
+        rusk_abi::debug!("MMTRANSFER existing_nullifiers");
         nullifiers
             .into_iter()
             .filter_map(|n| self.nullifiers.get(&n).map(|_| n))
@@ -466,6 +478,7 @@ impl TransferState {
 
     /// Add balance to the given contract
     pub fn add_balance(&mut self, contract: ContractId, value: u64) {
+        rusk_abi::debug!("MMTRANSFER add_balance {}", value);
         match self.balances.entry(contract) {
             Entry::Vacant(ve) => {
                 ve.insert(value);
@@ -528,6 +541,7 @@ impl TransferState {
         address: &ContractId,
         value: u64,
     ) -> Result<(), Error> {
+        rusk_abi::debug!("MMTRANSFER sub_balance {}", value);
         match self.balances.get_mut(address) {
             Some(balance) => {
                 let (bal, underflow) = balance.overflowing_sub(value);
