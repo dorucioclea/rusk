@@ -557,7 +557,8 @@ fn charlie_ping() {
             &CHARLIE_ID,
             POINT_LIMIT,
         )
-        .expect("Pushing genesis note should succeed").data;
+        .expect("Pushing genesis note should succeed")
+        .data;
 
     println!("balance of charlie contract is: {}", balance);
     // assert!(balance >= PING_FEE);
@@ -566,6 +567,12 @@ fn charlie_ping() {
     // only at the end we could do wfct of the actually consumed amount
 
     let credit_note = Note::transparent(rng, &psk, PING_FEE); //credit note
+    println!(
+        "created credit note of value: {}",
+        credit_note
+            .value(None)
+            .expect("getting transparent note value should succeed")
+    );
 
     let input_note = session
         .call::<_, Note>(
@@ -574,7 +581,8 @@ fn charlie_ping() {
             &(0u64, credit_note),
             POINT_LIMIT,
         )
-        .expect("Pushing genesis note should succeed").data;
+        .expect("Pushing genesis note should succeed")
+        .data;
 
     update_root(&mut session).expect("Updating the root should succeed");
 
@@ -594,7 +602,8 @@ fn charlie_ping() {
 
     // The change note should have the value of the input note, minus what is
     // maximally spent.
-    let change_value = input_value - gas_price * gas_limit;
+    // let change_value = input_value - gas_price * gas_limit;
+    let change_value = 0;
     let change_blinder = JubJubScalar::random(rng);
     println!("prepared change note with change value={}", change_value);
     let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);

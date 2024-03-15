@@ -109,6 +109,16 @@ unsafe fn num_notes(arg_len: u32) -> u32 {
     rusk_abi::wrap_call(arg_len, |_: ()| STATE.num_notes())
 }
 
+#[no_mangle]
+unsafe fn free_ticket(arg_len: u32) -> u32 {
+    rusk_abi::wrap_call(
+        arg_len,
+        |(module, hint, pk, r, nonce, blinding_factor)| {
+            STATE.free_ticket(&module, hint, &pk, r, nonce, blinding_factor)
+        },
+    )
+}
+
 // "Feeder" queries
 
 #[no_mangle]

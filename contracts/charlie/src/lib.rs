@@ -31,6 +31,8 @@ mod wasm {
 
     #[no_mangle]
     unsafe fn prepay(arg_len: u32) -> u32 {
-        rusk_abi::wrap_call(arg_len, |(value, proof)| STATE.prepay(value, proof))
+        rusk_abi::wrap_call(arg_len, |(value, proof)| {
+            STATE.prepay(value, proof)
+        })
     }
 }

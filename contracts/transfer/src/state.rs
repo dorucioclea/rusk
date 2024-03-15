@@ -14,10 +14,10 @@ use alloc::vec::Vec;
 
 use dusk_bls12_381::BlsScalar;
 use dusk_bytes::{DeserializableSlice, Serializable};
-use dusk_jubjub::{JubJubAffine, JubJubExtended};
-use dusk_pki::{Ownable, PublicKey, StealthAddress};
+use dusk_jubjub::{JubJubAffine, JubJubExtended, JubJubScalar};
+use dusk_pki::{Ownable, PublicKey, PublicSpendKey, StealthAddress};
 use phoenix_core::transaction::*;
-use phoenix_core::{Crossover, Fee, Message, Note};
+use phoenix_core::{Crossover, Fee, Message, Note, NoteType};
 use poseidon_merkle::Opening as PoseidonOpening;
 use rusk_abi::{
     ContractError, ContractId, PaymentInfo, PublicInput, STAKE_CONTRACT,
@@ -350,7 +350,10 @@ impl TransferState {
         //  6. Notes.append(No[])
         let block_height = rusk_abi::block_height();
         rusk_abi::debug!("MMTRANSFER inside spend_and_execute - extending tree with output notes, num outputs={} block_height={}", tx.outputs.len(), block_height);
-        rusk_abi::debug!("MMTRANSFER inside spend_and_execute - output notes pos={:?}", tx.outputs.iter().map(|note|note.pos()).collect::<Vec<_>>());
+        rusk_abi::debug!(
+            "MMTRANSFER inside spend_and_execute - output notes pos={:?}",
+            tx.outputs.iter().map(|note| note.pos()).collect::<Vec<_>>()
+        );
         self.tree.extend_notes(block_height, tx.outputs.clone());
 
         //  7. g_l < 2^64
@@ -499,6 +502,81 @@ impl TransferState {
         let message = map.get(&pk.to_bytes())?;
 
         Some(*message)
+    }
+
+    /// Checks if a given (sponsoring) contract has funds and allows these funds
+    /// to be used for a given pk (say, not onboarded user).
+    /// Sponsoring contract also determines the allowance, i.e.,
+    /// maximum amount to be used for the ticket.
+    /// This call provides a funding note and refund pk (which belongs to the
+    /// sponsoring contract).
+    pub fn free_ticket(
+        &mut self,
+        sponsor_contract_id: &ContractId,
+        hint: Vec<u8>, /* typically this would be contract's method name but
+                        * could be anything */
+        beneficiary_pk: &PublicKey,
+        r: JubJubScalar, /* r, nonce, blinding factor - needed for note
+                          * creation */
+        nonce: BlsScalar,
+        blinding_factor: JubJubScalar,
+    ) -> Option<(Note, PublicKey)> {
+        const CONTRACT_ALLOWANCE_QUERY: &str = "get_allowance";
+        const MIN_ALLOWANCE: u64 = 1_000_000;
+
+        // check if the contract has any balance at all, if not, return right
+        // away
+        let sponsor_balance = self.balance(sponsor_contract_id);
+        if sponsor_balance <= 0 {
+            return None;
+        }
+
+        // call the target contract and ask it for allowance
+        let (allowance, sponsor_pk) = rusk_abi::call::<_, (u64, PublicKey)>(
+            *sponsor_contract_id,
+            CONTRACT_ALLOWANCE_QUERY,
+            &(hint, *beneficiary_pk),
+        )
+        .ok()?;
+
+        // check if allowance is not greater than contract's balance
+        // and not smaller than minimum allowance
+        if sponsor_balance < allowance || allowance < MIN_ALLOWANCE {
+            return None;
+        }
+
+        // with a given allowance and balance, prepare a funding note and
+        // a refund pk, adjust balance accordingly
+
+        let psk = PublicSpendKey::from_bytes(&rusk_abi::self_owner()).ok()?;
+
+        let credit_note = Note::deterministic(
+            NoteType::Obfuscated,
+            &r,
+            nonce,
+            &psk,
+            allowance,
+            blinding_factor,
+        );
+
+        let credit_note = self.push_note_current_height(credit_note);
+
+        // transfer contract gives money for the execution but it decreases
+        // balance of the sponsoring contract to keep its money balance
+        // unchanged and make the sponsor contract to bear the cost
+        // on the other hand, sponsor contract will receive the change, so it
+        // will have to replenish its balance again later on
+
+        self.sub_balance(sponsor_contract_id, allowance).expect(
+            "Failed to subtract the balance of the sponsor contract!",
+        );
+
+        // returns credit note a pk to be used for change note
+        // as change goes directly to the sponsor
+        // caller of this method should prepare a calling tx
+        // with credit_note as input and sponsor_pk as beneficiary of the change
+        // note
+        Some((credit_note, sponsor_pk))
     }
 
     fn get_note(&self, pos: u64) -> Option<Note> {

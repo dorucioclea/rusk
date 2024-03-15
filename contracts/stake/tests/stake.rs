@@ -306,7 +306,8 @@ fn stake_withdraw_unstake() {
     // maximally spent.
     // let change_value = input_value - gas_price * gas_limit;
     // let change_blinder = JubJubScalar::random(rng);
-    // let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+    // let change_note = Note::obfuscated(rng, &psk, change_value,
+    // change_blinder);
 
     // Fashion a `Withdraw` struct instance
 
@@ -457,220 +458,232 @@ fn stake_withdraw_unstake() {
 
     // Start unstaking the previously staked amount
 
-    println!("height={} has leaves={}", 0, leaves_from_height(&mut session, 0).unwrap().len());
-    println!("height={} has leaves={}", 1, leaves_from_height(&mut session, 1).unwrap().len());
-    println!("height={} has leaves={}", 2, leaves_from_height(&mut session, 2).unwrap().len());
+    println!(
+        "height={} has leaves={}",
+        0,
+        leaves_from_height(&mut session, 0).unwrap().len()
+    );
+    println!(
+        "height={} has leaves={}",
+        1,
+        leaves_from_height(&mut session, 1).unwrap().len()
+    );
+    println!(
+        "height={} has leaves={}",
+        2,
+        leaves_from_height(&mut session, 2).unwrap().len()
+    );
 
-    // let leaves = leaves_from_height(&mut session, 2)
-    //     .expect("Getting the notes should succeed");
-    // assert_eq!(
-    //     leaves.len(),
-    //     3,
-    //     "There should be three notes in the tree at this block height \
-    //     due to there there also a reward note having been produced"
-    // );
+    let leaves = leaves_from_height(&mut session, 2)
+        .expect("Getting the notes should succeed");
+    assert_eq!(
+        leaves.len(),
+        3,
+        "There should be three notes in the tree at this block height \
+        due to there there also a reward note having been produced"
+    );
 
-    // let input_notes: Vec<Note> =
-    //     filter_notes_owned_by(vk, leaves.into_iter().map(|leaf| leaf.note));
-    //
-    // assert_eq!(
-    //     input_notes.len(),
-    //     3,
-    //     "All new notes should be owned by our view key"
-    // );
+    let input_notes: Vec<Note> =
+        filter_notes_owned_by(vk, leaves.into_iter().map(|leaf| leaf.note));
+
+    assert_eq!(
+        input_notes.len(),
+        3,
+        "All new notes should be owned by our view key"
+    );
 
     let mut input_values = [0u64; 3];
     let mut input_blinders = [JubJubScalar::zero(); 3];
     let mut input_nullifiers = [BlsScalar::zero(); 3];
-    //
-    // for i in 0..3 {
-    //     input_values[i] = input_notes[i]
-    //         .value(Some(&vk))
-    //         .expect("The given view key should own the note");
-    //     input_blinders[i] = input_notes[i]
-    //         .blinding_factor(Some(&vk))
-    //         .expect("The given view key should own the note");
-    //     input_nullifiers[i] = input_notes[i].gen_nullifier(&ssk);
-    // }
-    //
-    // let input_value: u64 = input_values.iter().sum();
-    //
-    // let gas_limit = WFCT_FEE;
-    // let gas_price = LUX;
-    //
-    // let fee = Fee::new(rng, gas_limit, gas_price, &psk);
+
+    for i in 0..3 {
+        input_values[i] = input_notes[i]
+            .value(Some(&vk))
+            .expect("The given view key should own the note");
+        input_blinders[i] = input_notes[i]
+            .blinding_factor(Some(&vk))
+            .expect("The given view key should own the note");
+        input_nullifiers[i] = input_notes[i].gen_nullifier(&ssk);
+    }
+
+    let input_value: u64 = input_values.iter().sum();
+
+    let gas_limit = WFCT_FEE;
+    let gas_price = LUX;
+
+    let fee = Fee::new(rng, gas_limit, gas_price, &psk);
 
     // The change note should have the value of the input note, minus what is
     // maximally spent.
-    // let change_value = input_value - gas_price * gas_limit;
-    // let change_blinder = JubJubScalar::random(rng);
-    // let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
-    //
-    // let withdraw_value = crossover_value;
-    // let withdraw_blinder = JubJubScalar::random(rng);
-    // let withdraw_note =
-    //     Note::obfuscated(rng, &psk, withdraw_value, withdraw_blinder);
+    let change_value = input_value - gas_price * gas_limit;
+    let change_blinder = JubJubScalar::random(rng);
+    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+
+    let withdraw_value = crossover_value;
+    let withdraw_blinder = JubJubScalar::random(rng);
+    let withdraw_note =
+        Note::obfuscated(rng, &psk, withdraw_value, withdraw_blinder);
 
     // Fashion a WFCT proof and an `Unstake` struct instance
 
-    // let wfct_circuit = WithdrawFromTransparentCircuit::new(
-    //     *withdraw_note.value_commitment(),
-    //     withdraw_value,
-    //     withdraw_blinder,
-    // );
-    // let (wfct_prover, _) = prover_verifier("WithdrawFromTransparentCircuit");
-    //
-    // let (wfct_proof, _) = wfct_prover
-    //     .prove(rng, &wfct_circuit)
-    //     .expect("Proving WFCT circuit should succeed");
-    //
-    // let unstake_digest =
-    //     unstake_signature_message(stake_data.counter, withdraw_note.to_bytes());
-    // let unstake_sig = sk.sign(&pk, unstake_digest.as_slice());
-    //
-    // let unstake = Unstake {
-    //     public_key: pk,
-    //     signature: unstake_sig,
-    //     note: withdraw_note.to_bytes().to_vec(),
-    //     proof: wfct_proof.to_bytes().to_vec(),
-    // };
-    // let unstake_bytes = rkyv::to_bytes::<_, 2048>(&unstake)
-    //     .expect("Serializing Unstake should succeed")
-    //     .to_vec();
-    //
-    // let call = Some((
-    //     STAKE_CONTRACT.to_bytes(),
-    //     String::from("unstake"),
-    //     unstake_bytes,
-    // ));
+    let wfct_circuit = WithdrawFromTransparentCircuit::new(
+        *withdraw_note.value_commitment(),
+        withdraw_value,
+        withdraw_blinder,
+    );
+    let (wfct_prover, _) = prover_verifier("WithdrawFromTransparentCircuit");
+
+    let (wfct_proof, _) = wfct_prover
+        .prove(rng, &wfct_circuit)
+        .expect("Proving WFCT circuit should succeed");
+
+    let unstake_digest =
+        unstake_signature_message(stake_data.counter, withdraw_note.to_bytes());
+    let unstake_sig = sk.sign(&pk, unstake_digest.as_slice());
+
+    let unstake = Unstake {
+        public_key: pk,
+        signature: unstake_sig,
+        note: withdraw_note.to_bytes().to_vec(),
+        proof: wfct_proof.to_bytes().to_vec(),
+    };
+    let unstake_bytes = rkyv::to_bytes::<_, 2048>(&unstake)
+        .expect("Serializing Unstake should succeed")
+        .to_vec();
+
+    let call = Some((
+        STAKE_CONTRACT.to_bytes(),
+        String::from("unstake"),
+        unstake_bytes,
+    ));
 
     // Compose the circuit. In this case we're using three inputs and one
     // output.
-    // let mut execute_circuit = ExecuteCircuitThreeTwo::new();
-    //
-    // execute_circuit.set_fee(&fee);
-    //
-    // execute_circuit
-    //     .add_output_with_data(change_note, change_value, change_blinder)
-    //     .expect("appending output should succeed");
-    //
-    // let input_opening_0 = opening(&mut session, *input_notes[0].pos())
-    //     .expect("Querying the opening for the given position should succeed")
-    //     .expect("An opening should exist for a note in the tree");
-    // let input_opening_1 = opening(&mut session, *input_notes[1].pos())
-    //     .expect("Querying the opening for the given position should succeed")
-    //     .expect("An opening should exist for a note in the tree");
-    // let input_opening_2 = opening(&mut session, *input_notes[2].pos())
-    //     .expect("Querying the opening for the given position should succeed")
-    //     .expect("An opening should exist for a note in the tree");
+    let mut execute_circuit = ExecuteCircuitThreeTwo::new();
+
+    execute_circuit.set_fee(&fee);
+
+    execute_circuit
+        .add_output_with_data(change_note, change_value, change_blinder)
+        .expect("appending output should succeed");
+
+    let input_opening_0 = opening(&mut session, *input_notes[0].pos())
+        .expect("Querying the opening for the given position should succeed")
+        .expect("An opening should exist for a note in the tree");
+    let input_opening_1 = opening(&mut session, *input_notes[1].pos())
+        .expect("Querying the opening for the given position should succeed")
+        .expect("An opening should exist for a note in the tree");
+    let input_opening_2 = opening(&mut session, *input_notes[2].pos())
+        .expect("Querying the opening for the given position should succeed")
+        .expect("An opening should exist for a note in the tree");
 
     // Generate pk_r_p
-    // let sk_r_0 = ssk.sk_r(input_notes[0].stealth_address());
-    // let pk_r_p_0 = GENERATOR_NUMS_EXTENDED * sk_r_0.as_ref();
-    // let sk_r_1 = ssk.sk_r(input_notes[1].stealth_address());
-    // let pk_r_p_1 = GENERATOR_NUMS_EXTENDED * sk_r_1.as_ref();
-    // let sk_r_2 = ssk.sk_r(input_notes[2].stealth_address());
-    // let pk_r_p_2 = GENERATOR_NUMS_EXTENDED * sk_r_2.as_ref();
+    let sk_r_0 = ssk.sk_r(input_notes[0].stealth_address());
+    let pk_r_p_0 = GENERATOR_NUMS_EXTENDED * sk_r_0.as_ref();
+    let sk_r_1 = ssk.sk_r(input_notes[1].stealth_address());
+    let pk_r_p_1 = GENERATOR_NUMS_EXTENDED * sk_r_1.as_ref();
+    let sk_r_2 = ssk.sk_r(input_notes[2].stealth_address());
+    let pk_r_p_2 = GENERATOR_NUMS_EXTENDED * sk_r_2.as_ref();
 
     // The transaction hash must be computed before signing
-    // let anchor =
-    //     root(&mut session).expect("Getting the anchor should be successful");
-    //
-    // let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
-    //     &[
-    //         input_nullifiers[0],
-    //         input_nullifiers[1],
-    //         input_nullifiers[2],
-    //     ],
-    //     &[change_note],
-    //     &anchor,
-    //     &fee,
-    //     &None,
-    //     &call,
-    // );
-    // let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
-    //
-    // execute_circuit.set_tx_hash(tx_hash);
-    //
-    // let circuit_input_signature_0 =
-    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[0], tx_hash);
-    // let circuit_input_signature_1 =
-    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[1], tx_hash);
-    // let circuit_input_signature_2 =
-    //     CircuitInputSignature::sign(rng, &ssk, &input_notes[2], tx_hash);
-    //
-    // let circuit_input_0 = CircuitInput::new(
-    //     input_opening_0,
-    //     input_notes[0],
-    //     pk_r_p_0.into(),
-    //     input_values[0],
-    //     input_blinders[0],
-    //     input_nullifiers[0],
-    //     circuit_input_signature_0,
-    // );
-    // let circuit_input_1 = CircuitInput::new(
-    //     input_opening_1,
-    //     input_notes[1],
-    //     pk_r_p_1.into(),
-    //     input_values[1],
-    //     input_blinders[1],
-    //     input_nullifiers[1],
-    //     circuit_input_signature_1,
-    // );
-    // let circuit_input_2 = CircuitInput::new(
-    //     input_opening_2,
-    //     input_notes[2],
-    //     pk_r_p_2.into(),
-    //     input_values[2],
-    //     input_blinders[2],
-    //     input_nullifiers[2],
-    //     circuit_input_signature_2,
-    // );
-    //
-    // execute_circuit
-    //     .add_input(circuit_input_0)
-    //     .expect("appending input should succeed");
-    // execute_circuit
-    //     .add_input(circuit_input_1)
-    //     .expect("appending input should succeed");
-    // execute_circuit
-    //     .add_input(circuit_input_2)
-    //     .expect("appending input should succeed");
-    //
-    // let (prover_key, _) = prover_verifier("ExecuteCircuitThreeTwo");
-    // let (execute_proof, _) = prover_key
-    //     .prove(rng, &execute_circuit)
-    //     .expect("Proving should be successful");
-    //
-    // let tx = Transaction {
-    //     anchor,
-    //     nullifiers: vec![
-    //         input_nullifiers[0],
-    //         input_nullifiers[1],
-    //         input_nullifiers[2],
-    //     ],
-    //     outputs: vec![change_note],
-    //     fee,
-    //     crossover: None,
-    //     proof: execute_proof.to_bytes().to_vec(),
-    //     call,
-    // };
+    let anchor =
+        root(&mut session).expect("Getting the anchor should be successful");
+
+    let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
+        &[
+            input_nullifiers[0],
+            input_nullifiers[1],
+            input_nullifiers[2],
+        ],
+        &[change_note],
+        &anchor,
+        &fee,
+        &None,
+        &call,
+    );
+    let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
+
+    execute_circuit.set_tx_hash(tx_hash);
+
+    let circuit_input_signature_0 =
+        CircuitInputSignature::sign(rng, &ssk, &input_notes[0], tx_hash);
+    let circuit_input_signature_1 =
+        CircuitInputSignature::sign(rng, &ssk, &input_notes[1], tx_hash);
+    let circuit_input_signature_2 =
+        CircuitInputSignature::sign(rng, &ssk, &input_notes[2], tx_hash);
+
+    let circuit_input_0 = CircuitInput::new(
+        input_opening_0,
+        input_notes[0],
+        pk_r_p_0.into(),
+        input_values[0],
+        input_blinders[0],
+        input_nullifiers[0],
+        circuit_input_signature_0,
+    );
+    let circuit_input_1 = CircuitInput::new(
+        input_opening_1,
+        input_notes[1],
+        pk_r_p_1.into(),
+        input_values[1],
+        input_blinders[1],
+        input_nullifiers[1],
+        circuit_input_signature_1,
+    );
+    let circuit_input_2 = CircuitInput::new(
+        input_opening_2,
+        input_notes[2],
+        pk_r_p_2.into(),
+        input_values[2],
+        input_blinders[2],
+        input_nullifiers[2],
+        circuit_input_signature_2,
+    );
+
+    execute_circuit
+        .add_input(circuit_input_0)
+        .expect("appending input should succeed");
+    execute_circuit
+        .add_input(circuit_input_1)
+        .expect("appending input should succeed");
+    execute_circuit
+        .add_input(circuit_input_2)
+        .expect("appending input should succeed");
+
+    let (prover_key, _) = prover_verifier("ExecuteCircuitThreeTwo");
+    let (execute_proof, _) = prover_key
+        .prove(rng, &execute_circuit)
+        .expect("Proving should be successful");
+
+    let tx = Transaction {
+        anchor,
+        nullifiers: vec![
+            input_nullifiers[0],
+            input_nullifiers[1],
+            input_nullifiers[2],
+        ],
+        outputs: vec![change_note],
+        fee,
+        crossover: None,
+        proof: execute_proof.to_bytes().to_vec(),
+        call,
+    };
 
     // set different block height so that the new notes are easily located and
     // filtered
     // sets the block height for all subsequent operations to 1
-    // let base = session.commit().expect("Committing should succeed");
-    // let mut session = rusk_abi::new_session(vm, base, 3)
-    //     .expect("Instantiating new session should succeed");
-    //
-    // let receipt =
-    //     execute(&mut session, tx).expect("Executing TX should succeed");
-    //
-    // assert_event(&receipt.events, "unstake", &pk, GENESIS_VALUE / 2);
-    //
-    // let gas_spent = receipt.gas_spent;
-    // receipt.data.expect("Executed TX should not error");
-    // update_root(&mut session).expect("Updating the root should succeed");
-    //
-    // println!("UNSTAKE : {gas_spent} gas");
+    let base = session.commit().expect("Committing should succeed");
+    let mut session = rusk_abi::new_session(vm, base, 3)
+        .expect("Instantiating new session should succeed");
+
+    let receipt =
+        execute(&mut session, tx).expect("Executing TX should succeed");
+
+    assert_event(&receipt.events, "unstake", &pk, GENESIS_VALUE / 2);
+
+    let gas_spent = receipt.gas_spent;
+    receipt.data.expect("Executed TX should not error");
+    update_root(&mut session).expect("Updating the root should succeed");
+
+    println!("UNSTAKE : {gas_spent} gas");
 }
