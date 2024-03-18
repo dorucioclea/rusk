@@ -7,10 +7,16 @@
 use std::sync::mpsc;
 
 use dusk_bls12_381::BlsScalar;
+use dusk_bls12_381_sign::{
+    PublicKey as SignPublicKey, SecretKey as SignSecretKey,
+};
 use dusk_bytes::Serializable;
 use dusk_jubjub::{JubJubScalar, GENERATOR_NUMS_EXTENDED};
-use dusk_pki::{Ownable, PublicKey, PublicSpendKey, SecretSpendKey, ViewKey};
+use dusk_pki::{
+    Ownable, PublicKey, PublicSpendKey, SecretKey, SecretSpendKey, ViewKey,
+};
 use dusk_plonk::prelude::*;
+use ff::Field;
 use phoenix_core::transaction::*;
 use phoenix_core::{Fee, Message, Note};
 use poseidon_merkle::Opening as PoseidonOpening;
@@ -42,7 +48,7 @@ const BOB_ID: ContractId = {
     bytes[0] = 0xFB;
     ContractId::from_bytes(bytes)
 };
-const CHARLIE_ID: ContractId = {
+const CHARLIE_CONTRACT_ID: ContractId = {
     let mut bytes = [0u8; 32];
     bytes[0] = 0xFC;
     ContractId::from_bytes(bytes)
@@ -106,7 +112,9 @@ fn instantiate<Rng: RngCore + CryptoRng>(
     session
         .deploy(
             charlie_bytecode,
-            ContractData::builder().owner(OWNER).contract_id(CHARLIE_ID),
+            ContractData::builder()
+                .owner(OWNER)
+                .contract_id(CHARLIE_CONTRACT_ID),
             POINT_LIMIT,
         )
         .expect("Deploying the charlie contract should succeed");
@@ -535,8 +543,174 @@ fn alice_ping() {
     );
 }
 
+fn charlie_subsidize<R: RngCore + CryptoRng>(
+    rng: &mut R,
+    mut session: &mut Session,
+    pk: SignPublicKey,
+    sk: SignSecretKey,
+    psk: PublicSpendKey,
+    ssk: SecretSpendKey,
+) {
+    let leaves = leaves_from_height(session, 0)
+        .expect("Getting leaves in the given range should succeed");
+
+    assert_eq!(leaves.len(), 1, "There should be one note in the state");
+
+    let input_note = leaves[0].note;
+    let input_value = input_note
+        .value(None)
+        .expect("The value should be transparent");
+    let input_blinder = input_note
+        .blinding_factor(None)
+        .expect("The blinder should be transparent");
+    let input_nullifier = input_note.gen_nullifier(&ssk);
+
+    let gas_limit = dusk(1.0);
+    let gas_price = LUX;
+
+    // Since we're transferring value to a contract, a crossover is needed. Here
+    // we transfer half of the input note to the stake contract, so the
+    // crossover value is `input_value/2`.
+    let crossover_value = input_value / 2;
+    let crossover_blinder = JubJubScalar::random(rng);
+
+    let (mut fee, crossover) =
+        Note::obfuscated(rng, &psk, crossover_value, crossover_blinder)
+            .try_into()
+            .expect("Getting a fee and a crossover should succeed");
+
+    fee.gas_limit = gas_limit;
+    fee.gas_price = gas_price;
+
+    // The change note should have the value of the input note, minus what is
+    // maximally spent.
+    let change_value = input_value - crossover_value - gas_price * gas_limit;
+    let change_blinder = JubJubScalar::random(rng);
+    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+
+    // Prove the STCT circuit.
+    let stct_address = rusk_abi::contract_to_scalar(&CHARLIE_CONTRACT_ID);
+    let stct_signature = SendToContractTransparentCircuit::sign(
+        rng,
+        &ssk,
+        &fee,
+        &crossover,
+        crossover_value,
+        &stct_address,
+    );
+
+    let stct_circuit = SendToContractTransparentCircuit::new(
+        &fee,
+        &crossover,
+        crossover_value,
+        crossover_blinder,
+        stct_address,
+        stct_signature,
+    );
+
+    let (prover, _) = prover_verifier("SendToContractTransparentCircuit");
+    let (stct_proof, _) = prover
+        .prove(rng, &stct_circuit)
+        .expect("Proving STCT circuit should succeed");
+
+    let stake_digest = stake_signature_message(0, crossover_value);
+    let sig = sk.sign(&pk, &stake_digest);
+
+    let stake = Stake {
+        public_key: pk,
+        signature: sig,
+        value: crossover_value,
+        proof: stct_proof.to_bytes().to_vec(),
+    };
+    let stake_bytes = rkyv::to_bytes::<_, 4096>(&stake)
+        .expect("Should serialize Stake correctly")
+        .to_vec();
+
+    let call = Some((
+        CHARLIE_CONTRACT_ID.to_bytes(),
+        String::from("subsidize"),
+        stake_bytes,
+    ));
+
+    // Compose the circuit. In this case we're using one input and one output.
+    let mut execute_circuit = ExecuteCircuitOneTwo::new();
+
+    execute_circuit.set_fee_crossover(
+        &fee,
+        &crossover,
+        crossover_value,
+        crossover_blinder,
+    );
+
+    execute_circuit
+        .add_output_with_data(change_note, change_value, change_blinder)
+        .expect("appending output should succeed");
+
+    let input_opening = opening(&mut session, *input_note.pos())
+        .expect("Querying the opening for the given position should succeed")
+        .expect("An opening should exist for a note in the tree");
+
+    // Generate pk_r_p
+    let sk_r = ssk.sk_r(input_note.stealth_address());
+    let pk_r_p = GENERATOR_NUMS_EXTENDED * sk_r.as_ref();
+
+    // The transaction hash must be computed before signing
+    let anchor =
+        root(&mut session).expect("Getting the anchor should be successful");
+
+    let tx_hash_input_bytes = Transaction::hash_input_bytes_from_components(
+        &[input_nullifier],
+        &[change_note],
+        &anchor,
+        &fee,
+        &Some(crossover),
+        &call,
+    );
+    let tx_hash = rusk_abi::hash(tx_hash_input_bytes);
+
+    execute_circuit.set_tx_hash(tx_hash);
+
+    let circuit_input_signature =
+        CircuitInputSignature::sign(rng, &ssk, &input_note, tx_hash);
+    let circuit_input = CircuitInput::new(
+        input_opening,
+        input_note,
+        pk_r_p.into(),
+        input_value,
+        input_blinder,
+        input_nullifier,
+        circuit_input_signature,
+    );
+
+    execute_circuit
+        .add_input(circuit_input)
+        .expect("appending input should succeed");
+
+    let (prover_key, _) = prover_verifier("ExecuteCircuitOneTwo");
+    let (execute_proof, _) = prover_key
+        .prove(rng, &execute_circuit)
+        .expect("Proving should be successful");
+
+    let tx = Transaction {
+        anchor,
+        nullifiers: vec![input_nullifier],
+        outputs: vec![change_note],
+        fee,
+        crossover: Some(crossover),
+        proof: execute_proof.to_bytes().to_vec(),
+        call,
+    };
+
+    let gas_spent =
+        execute(&mut session, tx).expect("Executing TX should succeed");
+
+    update_root(&mut session).expect("Updating the root should succeed");
+
+    println!("CHARLIE has been subsidized   : {gas_spent} gas");
+}
+
 #[test]
-fn charlie_ping() {
+fn charlie_free_call() {
     const PING_FEE: u64 = dusk(1.0);
 
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
@@ -544,48 +718,46 @@ fn charlie_ping() {
     let vm = &mut rusk_abi::new_ephemeral_vm()
         .expect("Creating ephemeral VM should work");
 
-    let ssk = SecretSpendKey::random(rng);
-    let psk = PublicSpendKey::from(&ssk);
+    let ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
+    let psk = PublicSpendKey::from(&ssk); // money giver to subsidize the sponsor
+
+    let beneficiary_sk = SecretKey::random(rng); // secret key of the free riding user, not really used now
+    let beneficiary_pk = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
+
+    let sk = SignSecretKey::random(rng); // beneficiary of subsidizing
+    let pk = SignPublicKey::from(&sk); // beneficiary of subsidizing
 
     let mut session = &mut instantiate(rng, vm, &psk);
     println!("instantiate done");
 
-    let balance = session
-        .call::<_, u64>(
+    charlie_subsidize(rng, &mut session, pk, sk, psk, ssk); // make sure that psk is owner of the sponsor contract
+
+    // now that sponsor contract Charlie has been subsidized, meaning, it has
+    // now some funds we can ask it for allowance and try to execute a free
+    // call of one of its methods, say, ping
+
+    let r = JubJubScalar::random(rng);
+    let nonce = BlsScalar::random(&mut *rng);
+    let blinding_factor = JubJubScalar::random(rng);
+
+    let (funding_note, sponsor_psk) = session
+        .call::<(ContractId, Vec::<u8>, PublicKey, JubJubScalar, BlsScalar, JubJubScalar), (Note, PublicSpendKey)>(
             TRANSFER_CONTRACT,
-            "module_balance",
-            &CHARLIE_ID,
+            "free_ticket",
+            &(
+                CHARLIE_CONTRACT_ID,
+                vec![],
+                beneficiary_pk,
+                r,
+                nonce,
+                blinding_factor,
+            ),
             POINT_LIMIT,
         )
-        .expect("Pushing genesis note should succeed")
+        .expect("getting allowance should succeed")
         .data;
 
-    println!("balance of charlie contract is: {}", balance);
-    // assert!(balance >= PING_FEE);
-
-    // wfct needed here but maybe we could avoid it at the beginning?
-    // only at the end we could do wfct of the actually consumed amount
-
-    let credit_note = Note::transparent(rng, &psk, PING_FEE); //credit note
-    println!(
-        "created credit note of value: {}",
-        credit_note
-            .value(None)
-            .expect("getting transparent note value should succeed")
-    );
-
-    let input_note = session
-        .call::<_, Note>(
-            TRANSFER_CONTRACT,
-            "push_note",
-            &(0u64, credit_note),
-            POINT_LIMIT,
-        )
-        .expect("Pushing genesis note should succeed")
-        .data;
-
-    update_root(&mut session).expect("Updating the root should succeed");
-
+    let input_note = funding_note;
     let input_value = input_note
         .value(None)
         .expect("The value should be transparent");
@@ -598,17 +770,18 @@ fn charlie_ping() {
     let gas_limit = PING_FEE;
     let gas_price = LUX;
 
-    let fee = Fee::new(rng, gas_limit, gas_price, &psk);
+    let fee = Fee::new(rng, gas_limit, gas_price, &sponsor_psk);
 
     // The change note should have the value of the input note, minus what is
     // maximally spent.
-    // let change_value = input_value - gas_price * gas_limit;
-    let change_value = 0;
+    let change_value = input_value - gas_price * gas_limit;
     let change_blinder = JubJubScalar::random(rng);
     println!("prepared change note with change value={}", change_value);
-    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+    let change_note =
+        Note::obfuscated(rng, &sponsor_psk, change_value, change_blinder);
 
-    let call = Some((CHARLIE_ID.to_bytes(), String::from("ping"), vec![]));
+    let call =
+        Some((CHARLIE_CONTRACT_ID.to_bytes(), String::from("ping"), vec![]));
 
     // Compose the circuit. In this case we're using one input and one output.
     let mut circuit = ExecuteCircuitOneTwo::new();
@@ -679,14 +852,6 @@ fn charlie_ping() {
     update_root(session).expect("Updating the root should succeed");
 
     println!("EXECUTE_PING: {gas_spent} gas");
-
-    let leaves = leaves_from_height(session, 1)
-        .expect("Getting the notes should succeed");
-    assert_eq!(
-        leaves.len(),
-        2,
-        "There should be two notes in the tree after the transaction"
-    );
 }
 
 #[test]

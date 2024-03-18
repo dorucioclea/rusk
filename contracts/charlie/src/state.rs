@@ -28,7 +28,7 @@ impl Charlie {
     /// into the stake contract's wallet
     pub fn subsidize(&mut self, stake: Stake) {
         // verify the signature is over the correct digest
-        // note: counter is always zero - make sure that it is safe
+        // note: counter is always zero - make sure that this is safe
         let digest = stake_signature_message(0, stake.value).to_vec();
 
         if !rusk_abi::verify_bls(digest, stake.public_key, stake.signature) {

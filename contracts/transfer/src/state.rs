@@ -520,7 +520,7 @@ impl TransferState {
                           * creation */
         nonce: BlsScalar,
         blinding_factor: JubJubScalar,
-    ) -> Option<(Note, PublicKey)> {
+    ) -> Option<(Note, PublicSpendKey)> {
         const CONTRACT_ALLOWANCE_QUERY: &str = "get_allowance";
         const MIN_ALLOWANCE: u64 = 1_000_000;
 
@@ -532,12 +532,15 @@ impl TransferState {
         }
 
         // call the target contract and ask it for allowance
-        let (allowance, sponsor_pk) = rusk_abi::call::<_, (u64, PublicKey)>(
-            *sponsor_contract_id,
-            CONTRACT_ALLOWANCE_QUERY,
-            &(hint, *beneficiary_pk),
-        )
-        .ok()?;
+        let (allowance, sponsor_psk_bytes) =
+            rusk_abi::call::<_, (u64, [u8; PublicSpendKey::SIZE])>(
+                *sponsor_contract_id,
+                CONTRACT_ALLOWANCE_QUERY,
+                &(hint, *beneficiary_pk),
+            )
+            .ok()?;
+        let sponsor_psk = PublicSpendKey::from_bytes(&sponsor_psk_bytes)
+            .expect("conversion from bytes to public spend key should succeed");
 
         // check if allowance is not greater than contract's balance
         // and not smaller than minimum allowance
@@ -575,7 +578,7 @@ impl TransferState {
         // caller of this method should prepare a calling tx
         // with credit_note as input and sponsor_pk as beneficiary of the change
         // note
-        Some((credit_note, sponsor_pk))
+        Some((credit_note, sponsor_psk))
     }
 
     fn get_note(&self, pos: u64) -> Option<Note> {
