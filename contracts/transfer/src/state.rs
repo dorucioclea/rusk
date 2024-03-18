@@ -505,11 +505,11 @@ impl TransferState {
     }
 
     /// Checks if a given (sponsoring) contract has funds and allows these funds
-    /// to be used for a given pk (say, not onboarded user).
-    /// Sponsoring contract also determines the allowance, i.e.,
-    /// maximum amount to be used for the ticket.
-    /// This call provides a funding note and refund pk (which belongs to the
-    /// sponsoring contract).
+    /// to be used for a given pk (say, a not onboarded user).
+    /// Sponsoring contract provides the funds and determines the allowance,
+    /// i.e., the maximum amount to be used by the user of the "ticket".
+    /// This call produces a funding note and a refund pk.
+    /// Refund pk is obtained from the sponsoring contract.
     pub fn free_ticket(
         &mut self,
         sponsor_contract_id: &ContractId,
@@ -567,9 +567,8 @@ impl TransferState {
         // on the other hand, sponsor contract will receive the change, so it
         // will have to replenish its balance again later on
 
-        self.sub_balance(sponsor_contract_id, allowance).expect(
-            "Failed to subtract the balance of the sponsor contract!",
-        );
+        self.sub_balance(sponsor_contract_id, allowance)
+            .expect("Failed to subtract the balance of the sponsor contract!");
 
         // returns credit note a pk to be used for change note
         // as change goes directly to the sponsor

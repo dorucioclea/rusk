@@ -5,26 +5,32 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 use alloc::vec::Vec;
-use phoenix_core::transaction::*;
-use rusk_abi::TRANSFER_CONTRACT;
+use dusk_bytes::Serializable;
+use dusk_pki::{PublicKey, PublicSpendKey};
 
-/// Alice contract.
 #[derive(Debug, Clone)]
 pub struct Charlie;
 
 impl Charlie {
     pub fn ping(&mut self) {
-        rusk_abi::debug!("CHARLIE ping");
+        rusk_abi::debug!("Charlie ping - Charlie is a sponsor");
     }
 
-    pub fn prepay(&mut self, value: u64, proof: Vec<u8>) {
-        let stct = Stct {
-            module: rusk_abi::self_id().to_bytes(),
-            value,
-            proof,
-        };
-
-        let _: bool = rusk_abi::call(TRANSFER_CONTRACT, "stct", &stct)
-            .expect("Sending note to contract should succeed");
+    pub fn get_allowance(
+        &mut self,
+        _hint: Vec<u64>,
+        _beneficiary_pk: PublicKey,
+    ) -> (u64, [u8; PublicSpendKey::SIZE]) {
+        const DEFAULT_ALLOWANCE: u64 = 10_000_000_000;
+        let allowance = DEFAULT_ALLOWANCE;
+        // here:
+        // use the given hint and beneficiary pk to
+        // determine the allowance
+        // allowance can be zero if the given pk indicates user which
+        // this sponsor contract does not want to fund
+        // in any case the sponsor contract should return its own
+        // psk to obtain a change from the allowance given
+        // i.e., the not spent (unused) part of the allowance
+        (allowance, rusk_abi::self_owner())
     }
 }
