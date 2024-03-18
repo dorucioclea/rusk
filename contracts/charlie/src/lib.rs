@@ -30,6 +30,11 @@ mod wasm {
     }
 
     #[no_mangle]
+    unsafe fn subsidize(arg_len: u32) -> u32 {
+        rusk_abi::wrap_call(arg_len, |arg| STATE.subsidize(arg))
+    }
+
+    #[no_mangle]
     unsafe fn get_allowance(arg_len: u32) -> u32 {
         rusk_abi::wrap_call(arg_len, |(hint, beneficiary_pk)| {
             STATE.get_allowance(hint, beneficiary_pk)
