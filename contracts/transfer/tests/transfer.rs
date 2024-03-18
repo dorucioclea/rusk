@@ -709,6 +709,19 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
     println!("CHARLIE has been subsidized   : {gas_spent} gas");
 }
 
+fn show_contract_balance(session: &mut Session, contract_id: ContractId) {
+    let balance = session
+        .call::<ContractId, u64>(
+            TRANSFER_CONTRACT,
+            "module_balance",
+            &(contract_id),
+            POINT_LIMIT,
+        )
+        .expect("getting allowance should succeed")
+        .data;
+    println!("current balance of contract {} is {}", hex::encode(contract_id.to_bytes()), balance);
+}
+
 #[test]
 fn charlie_free_call() {
     const PING_FEE: u64 = dusk(1.0);
@@ -731,6 +744,9 @@ fn charlie_free_call() {
     println!("instantiate done");
 
     charlie_subsidize(rng, &mut session, pk, sk, psk, ssk); // make sure that psk is owner of the sponsor contract
+    println!("subsidizing done");
+
+    show_contract_balance(&mut session, CHARLIE_CONTRACT_ID);
 
     // now that sponsor contract Charlie has been subsidized, meaning, it has
     // now some funds we can ask it for allowance and try to execute a free
