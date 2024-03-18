@@ -45,8 +45,19 @@ impl Charlie {
             proof: stake.proof,
         };
 
-        let _: bool = rusk_abi::call(transfer_module, "stct", &stct)
+        rusk_abi::debug!(
+            "charlie - subsidize - subsidize contract {:x?} with value {}",
+            stct.module,
+            stct.value
+        );
+
+        let r: bool = rusk_abi::call(transfer_module, "stct", &stct)
             .expect("Sending note to contract should succeed");
+
+        rusk_abi::debug!(
+            "charlie - subsidize - called stct and it returned {}",
+            r
+        );
     }
 
     /// at the moment it does not need to be mutable on self,

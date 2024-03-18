@@ -701,8 +701,13 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
         call,
     };
 
-    let gas_spent =
-        execute(&mut session, tx).expect("Executing TX should succeed");
+    println!("executing subsidizing tx for CHARLIE");
+
+    let r = execute(&mut session, tx); //.expect("Executing TX should succeed");
+
+    println!("r={:?}", r);
+
+    let gas_spent = r.expect("Executing TX should succeed");
 
     update_root(&mut session).expect("Updating the root should succeed");
 
@@ -719,7 +724,11 @@ fn show_contract_balance(session: &mut Session, contract_id: ContractId) {
         )
         .expect("getting allowance should succeed")
         .data;
-    println!("current balance of contract {} is {}", hex::encode(contract_id.to_bytes()), balance);
+    println!(
+        "current balance of contract {} is {}",
+        hex::encode(contract_id.to_bytes()),
+        balance
+    );
 }
 
 #[test]
@@ -757,7 +766,14 @@ fn charlie_free_call() {
     let blinding_factor = JubJubScalar::random(rng);
 
     let (funding_note, sponsor_psk) = session
-        .call::<(ContractId, Vec::<u8>, PublicKey, JubJubScalar, BlsScalar, JubJubScalar), (Note, PublicSpendKey)>(
+        .call::<(
+            ContractId,
+            Vec<u8>,
+            PublicKey,
+            JubJubScalar,
+            BlsScalar,
+            JubJubScalar,
+        ), (Note, PublicSpendKey)>(
             TRANSFER_CONTRACT,
             "free_ticket",
             &(

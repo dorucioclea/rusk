@@ -17,7 +17,7 @@ use state::Charlie;
 mod wasm {
     use super::*;
 
-    use rusk_abi::ContractId;
+    use rusk_abi::{ContractId, PaymentInfo};
 
     #[no_mangle]
     static SELF_ID: ContractId = ContractId::uninitialized();
@@ -39,5 +39,12 @@ mod wasm {
         rusk_abi::wrap_call(arg_len, |(hint, beneficiary_pk)| {
             STATE.get_allowance(hint, beneficiary_pk)
         })
+    }
+
+    const PAYMENT_INFO: PaymentInfo = PaymentInfo::Any(None);
+
+    #[no_mangle]
+    fn payment_info(arg_len: u32) -> u32 {
+        rusk_abi::wrap_call(arg_len, |_: ()| PAYMENT_INFO)
     }
 }
