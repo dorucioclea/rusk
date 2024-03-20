@@ -67,7 +67,7 @@ fn instantiate<Rng: RngCore + CryptoRng>(
     rng: &mut Rng,
     vm: &VM,
     psk: &PublicSpendKey,
-    charlie_owner: Option<PublicSpendKey>
+    charlie_owner: Option<PublicSpendKey>,
 ) -> Session {
     let transfer_bytecode = include_bytes!(
         "../../../target/wasm64-unknown-unknown/release/transfer_contract.wasm"
@@ -549,10 +549,10 @@ fn alice_ping() {
 fn charlie_subsidize<R: RngCore + CryptoRng>(
     rng: &mut R,
     mut session: &mut Session,
-    pk: SignPublicKey,
-    sk: SignSecretKey,
-    psk: PublicSpendKey,
-    ssk: SecretSpendKey,
+    subsidy_keeper_pk: SignPublicKey,
+    subsidy_keeper_sk: SignSecretKey,
+    subsidizer_psk: PublicSpendKey,
+    subsidizer_ssk: SecretSpendKey,
 ) {
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -566,7 +566,7 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
     let input_blinder = input_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
-    let input_nullifier = input_note.gen_nullifier(&ssk);
+    let input_nullifier = input_note.gen_nullifier(&subsidizer_ssk);
 
     let gas_limit = dusk(1.0);
     let gas_price = LUX;
@@ -577,10 +577,14 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
     let crossover_value = input_value / 2;
     let crossover_blinder = JubJubScalar::random(rng);
 
-    let (mut fee, crossover) =
-        Note::obfuscated(rng, &psk, crossover_value, crossover_blinder)
-            .try_into()
-            .expect("Getting a fee and a crossover should succeed");
+    let (mut fee, crossover) = Note::obfuscated(
+        rng,
+        &subsidizer_psk,
+        crossover_value,
+        crossover_blinder,
+    )
+    .try_into()
+    .expect("Getting a fee and a crossover should succeed");
 
     fee.gas_limit = gas_limit;
     fee.gas_price = gas_price;
@@ -589,13 +593,14 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
     // maximally spent.
     let change_value = input_value - crossover_value - gas_price * gas_limit;
     let change_blinder = JubJubScalar::random(rng);
-    let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
+    let change_note =
+        Note::obfuscated(rng, &subsidizer_psk, change_value, change_blinder);
 
     // Prove the STCT circuit.
     let stct_address = rusk_abi::contract_to_scalar(&CHARLIE_CONTRACT_ID);
     let stct_signature = SendToContractTransparentCircuit::sign(
         rng,
-        &ssk,
+        &subsidizer_ssk,
         &fee,
         &crossover,
         crossover_value,
@@ -617,10 +622,10 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
         .expect("Proving STCT circuit should succeed");
 
     let stake_digest = stake_signature_message(0, crossover_value);
-    let sig = sk.sign(&pk, &stake_digest);
+    let sig = subsidy_keeper_sk.sign(&subsidy_keeper_pk, &stake_digest);
 
     let stake = Stake {
-        public_key: pk,
+        public_key: subsidy_keeper_pk,
         signature: sig,
         value: crossover_value,
         proof: stct_proof.to_bytes().to_vec(),
@@ -654,7 +659,7 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
         .expect("An opening should exist for a note in the tree");
 
     // Generate pk_r_p
-    let sk_r = ssk.sk_r(input_note.stealth_address());
+    let sk_r = subsidizer_ssk.sk_r(input_note.stealth_address());
     let pk_r_p = GENERATOR_NUMS_EXTENDED * sk_r.as_ref();
 
     // The transaction hash must be computed before signing
@@ -674,7 +679,7 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
     execute_circuit.set_tx_hash(tx_hash);
 
     let circuit_input_signature =
-        CircuitInputSignature::sign(rng, &ssk, &input_note, tx_hash);
+        CircuitInputSignature::sign(rng, &subsidizer_ssk, &input_note, tx_hash);
     let circuit_input = CircuitInput::new(
         input_opening,
         input_note,
@@ -743,24 +748,39 @@ fn charlie_free_call() {
     let vm = &mut rusk_abi::new_ephemeral_vm()
         .expect("Creating ephemeral VM should work");
 
-    let ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
-    let psk = PublicSpendKey::from(&ssk); // money giver to subsidize the sponsor
+    let subsidizer_ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
+    let subsidizer_psk = PublicSpendKey::from(&subsidizer_ssk); // money giver to subsidize the sponsor
 
     let test_sponsor_ssk = SecretSpendKey::random(rng);
     let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
 
+    // beneficiary psk/ssk serve as id only, so that sponsor contract has to
+    // administer allowances, etc.
     let beneficiary_sk = SecretKey::random(rng); // secret key of the free riding user, not really used now
-    let beneficiary_pk = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
+    let beneficiary_pk_as_id = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
 
-    let sk = SignSecretKey::random(rng); // beneficiary of subsidizing
-    let pk = SignPublicKey::from(&sk); // beneficiary of subsidizing
+    let subsidy_keeper_sk = SignSecretKey::random(rng); // beneficiary of subsidizing
+    let subsidy_keeper_pk = SignPublicKey::from(&subsidy_keeper_sk); // beneficiary of subsidizing
 
-    let mut session = &mut instantiate(rng, vm, &psk, Some(test_sponsor_psk));
+    // this will create and push a subsidizing note for the sponsor contract
+    // Charlie it will also deploy Charlie with test_sponsor_psk as owner
+    let mut session =
+        &mut instantiate(rng, vm, &subsidizer_psk, Some(test_sponsor_psk));
     println!("instantiate done");
 
-    charlie_subsidize(rng, &mut session, pk, sk, psk, ssk); // make sure that psk is owner of the sponsor contract
+    // now we subsidize Charlie with funds from subsidizer_ssk/subsidizer_ssk,
+    // after this point subsidizer_ssk/subsidizer_ssk should not be needed
+    charlie_subsidize(
+        rng,
+        &mut session,
+        subsidy_keeper_pk,
+        subsidy_keeper_sk,
+        subsidizer_psk,
+        subsidizer_ssk,
+    );
     println!("subsidizing done");
 
+    // let's see if Charlie contract is properly subsidized
     show_contract_balance(&mut session, CHARLIE_CONTRACT_ID);
 
     // now that sponsor contract Charlie has been subsidized, meaning, it has
@@ -785,7 +805,7 @@ fn charlie_free_call() {
             &(
                 CHARLIE_CONTRACT_ID,
                 vec![],
-                beneficiary_pk,
+                beneficiary_pk_as_id,
                 r,
                 nonce,
             ),
@@ -859,8 +879,12 @@ fn charlie_free_call() {
 
     circuit.set_tx_hash(tx_hash);
 
-    let circuit_input_signature =
-        CircuitInputSignature::sign(rng, &test_sponsor_ssk, &funding_note, tx_hash);
+    let circuit_input_signature = CircuitInputSignature::sign(
+        rng,
+        &test_sponsor_ssk,
+        &funding_note,
+        tx_hash,
+    );
     let circuit_input = CircuitInput::new(
         opening,
         funding_note,

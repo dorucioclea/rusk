@@ -543,7 +543,10 @@ impl TransferState {
         if sponsor_balance <= 0 {
             return None;
         }
-        rusk_abi::debug!("TR free_ticket - sponsor balance={}", sponsor_balance);
+        rusk_abi::debug!(
+            "TR free_ticket - sponsor balance={}",
+            sponsor_balance
+        );
 
         // call the target contract and ask it for allowance
         let (allowance, sponsor_psk_bytes) =
@@ -566,7 +569,8 @@ impl TransferState {
         // with a given allowance and balance, prepare a funding note and
         // a refund pk, adjust balance accordingly
 
-        // rusk_abi::debug!("TR free_ticket - getting transfer contract's psk ({:x?})", rusk_abi::self_owner::<32>());
+        // rusk_abi::debug!("TR free_ticket - getting transfer contract's psk
+        // ({:x?})", rusk_abi::self_owner::<32>());
         // let psk = PublicSpendKey::from_bytes(&rusk_abi::self_owner()).ok()?;
 
         rusk_abi::debug!("TR free_ticket - creating credit note");
@@ -589,7 +593,10 @@ impl TransferState {
         // on the other hand, sponsor contract will receive the change, so it
         // will have to replenish its balance again later on
 
-        rusk_abi::debug!("TR free_ticket - subtracting {} from sponsor balance", allowance);
+        rusk_abi::debug!(
+            "TR free_ticket - subtracting {} from sponsor balance",
+            allowance
+        );
         self.sub_balance(sponsor_contract_id, allowance)
             .expect("Failed to subtract the balance of the sponsor contract!");
         rusk_abi::debug!("TR free_ticket - balance subtracted");
