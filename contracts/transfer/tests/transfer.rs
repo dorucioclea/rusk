@@ -746,9 +746,6 @@ fn charlie_free_call() {
     let ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
     let psk = PublicSpendKey::from(&ssk); // money giver to subsidize the sponsor
 
-    let ssk2 = SecretSpendKey::random(rng); // owner of the "free" note funds
-    let psk2 = PublicSpendKey::from(&ssk2); // owner of the "free" note funds
-
     let test_sponsor_ssk = SecretSpendKey::random(rng);
     let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
 
@@ -772,7 +769,6 @@ fn charlie_free_call() {
 
     let r = JubJubScalar::random(rng);
     let nonce = BlsScalar::random(&mut *rng);
-    let blinding_factor = JubJubScalar::zero();
 
     println!("obtaining free ticket");
 
@@ -781,10 +777,8 @@ fn charlie_free_call() {
             ContractId,
             Vec<u8>,
             PublicKey,
-            PublicSpendKey,
             JubJubScalar,
             BlsScalar,
-            JubJubScalar,
         ), (Note, PublicSpendKey)>(
             TRANSFER_CONTRACT,
             "free_ticket",
@@ -792,10 +786,8 @@ fn charlie_free_call() {
                 CHARLIE_CONTRACT_ID,
                 vec![],
                 beneficiary_pk,
-                psk2,
                 r,
                 nonce,
-                blinding_factor,
             ),
             POINT_LIMIT,
         )
@@ -816,8 +808,6 @@ fn charlie_free_call() {
     let input_blinder = funding_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
-
-    assert_eq!(input_blinder, blinding_factor);
 
     let input_nullifier = funding_note.gen_nullifier(&test_sponsor_ssk);
 

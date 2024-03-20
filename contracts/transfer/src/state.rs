@@ -530,11 +530,9 @@ impl TransferState {
         hint: Vec<u8>, /* typically this would be contract's method name but
                         * could be anything */
         beneficiary_pk: &PublicKey,
-        _psk: &PublicSpendKey,
         r: JubJubScalar, /* r, nonce, blinding factor - needed for note
                           * creation */
         nonce: BlsScalar,
-        blinding_factor: JubJubScalar,
     ) -> Option<(Note, PublicSpendKey)> {
         const CONTRACT_ALLOWANCE_QUERY: &str = "get_allowance";
         const MIN_ALLOWANCE: u64 = 1_000_000;
@@ -578,7 +576,7 @@ impl TransferState {
             nonce,
             &sponsor_psk,
             allowance,
-            blinding_factor,
+            JubJubScalar::zero(),
         );
         rusk_abi::debug!("TR free_ticket - credit note created");
 
