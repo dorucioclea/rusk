@@ -530,6 +530,7 @@ impl TransferState {
         hint: Vec<u8>, /* typically this would be contract's method name but
                         * could be anything */
         beneficiary_pk: &PublicKey,
+        _psk: &PublicSpendKey,
         r: JubJubScalar, /* r, nonce, blinding factor - needed for note
                           * creation */
         nonce: BlsScalar,
@@ -544,6 +545,7 @@ impl TransferState {
         if sponsor_balance <= 0 {
             return None;
         }
+        rusk_abi::debug!("TR free_ticket - sponsor balance={}", sponsor_balance);
 
         // call the target contract and ask it for allowance
         let (allowance, sponsor_psk_bytes) =
@@ -555,28 +557,33 @@ impl TransferState {
             .ok()?;
         let sponsor_psk = PublicSpendKey::from_bytes(&sponsor_psk_bytes)
             .expect("conversion from bytes to public spend key should succeed");
+        rusk_abi::debug!("TR free_ticket - sponsor allowance={}", allowance);
 
         // check if allowance is not greater than contract's balance
         // and not smaller than minimum allowance
-        if sponsor_balance < allowance || allowance < MIN_ALLOWANCE {
+        if !(allowance < sponsor_balance && allowance > MIN_ALLOWANCE) {
             return None;
         }
 
         // with a given allowance and balance, prepare a funding note and
         // a refund pk, adjust balance accordingly
 
-        let psk = PublicSpendKey::from_bytes(&rusk_abi::self_owner()).ok()?;
+        // rusk_abi::debug!("TR free_ticket - getting transfer contract's psk ({:x?})", rusk_abi::self_owner::<32>());
+        // let psk = PublicSpendKey::from_bytes(&rusk_abi::self_owner()).ok()?;
 
+        rusk_abi::debug!("TR free_ticket - creating credit note");
         let credit_note = Note::deterministic(
-            NoteType::Obfuscated,
+            NoteType::Transparent,
             &r,
             nonce,
-            &psk,
+            &sponsor_psk,
             allowance,
             blinding_factor,
         );
+        rusk_abi::debug!("TR free_ticket - credit note created");
 
         let credit_note = self.push_note_current_height(credit_note);
+        rusk_abi::debug!("TR free_ticket - credit note pushed");
 
         // transfer contract gives money for the execution but it decreases
         // balance of the sponsoring contract to keep its money balance
@@ -584,10 +591,12 @@ impl TransferState {
         // on the other hand, sponsor contract will receive the change, so it
         // will have to replenish its balance again later on
 
+        rusk_abi::debug!("TR free_ticket - subtracting {} from sponsor balance", allowance);
         self.sub_balance(sponsor_contract_id, allowance)
             .expect("Failed to subtract the balance of the sponsor contract!");
+        rusk_abi::debug!("TR free_ticket - balance subtracted");
 
-        // returns credit note a pk to be used for change note
+        // returns credit note and a pk to be used for change note
         // as change goes directly to the sponsor
         // caller of this method should prepare a calling tx
         // with credit_note as input and sponsor_pk as beneficiary of the change

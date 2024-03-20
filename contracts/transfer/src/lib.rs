@@ -113,8 +113,8 @@ unsafe fn num_notes(arg_len: u32) -> u32 {
 unsafe fn free_ticket(arg_len: u32) -> u32 {
     rusk_abi::wrap_call(
         arg_len,
-        |(module, hint, pk, r, nonce, blinding_factor)| {
-            STATE.free_ticket(&module, hint, &pk, r, nonce, blinding_factor)
+        |(module, hint, pk, psk, r, nonce, blinding_factor)| {
+            STATE.free_ticket(&module, hint, &pk, &psk, r, nonce, blinding_factor)
         },
     )
 }

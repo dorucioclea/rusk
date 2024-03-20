@@ -67,6 +67,7 @@ fn instantiate<Rng: RngCore + CryptoRng>(
     rng: &mut Rng,
     vm: &VM,
     psk: &PublicSpendKey,
+    charlie_owner: Option<PublicSpendKey>
 ) -> Session {
     let transfer_bytecode = include_bytes!(
         "../../../target/wasm64-unknown-unknown/release/transfer_contract.wasm"
@@ -109,15 +110,17 @@ fn instantiate<Rng: RngCore + CryptoRng>(
         )
         .expect("Deploying the bob contract should succeed");
 
-    session
-        .deploy(
-            charlie_bytecode,
-            ContractData::builder()
-                .owner(OWNER)
-                .contract_id(CHARLIE_CONTRACT_ID),
-            POINT_LIMIT,
-        )
-        .expect("Deploying the charlie contract should succeed");
+    if let Some(charlie_owner) = charlie_owner {
+        session
+            .deploy(
+                charlie_bytecode,
+                ContractData::builder()
+                    .owner(charlie_owner.to_bytes())
+                    .contract_id(CHARLIE_CONTRACT_ID),
+                POINT_LIMIT,
+            )
+            .expect("Deploying the charlie contract should succeed");
+    }
 
     let genesis_note = Note::transparent(rng, psk, GENESIS_VALUE);
 
@@ -280,7 +283,7 @@ fn transfer() {
     let receiver_ssk = SecretSpendKey::random(rng);
     let receiver_psk = PublicSpendKey::from(&receiver_ssk);
 
-    let session = &mut instantiate(rng, vm, &psk);
+    let session = &mut instantiate(rng, vm, &psk, None);
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -432,7 +435,7 @@ fn alice_ping() {
     let ssk = SecretSpendKey::random(rng);
     let psk = PublicSpendKey::from(&ssk);
 
-    let session = &mut instantiate(rng, vm, &psk);
+    let session = &mut instantiate(rng, vm, &psk, None);
     println!("instantiate done");
 
     let leaves = leaves_from_height(session, 0)
@@ -722,7 +725,7 @@ fn show_contract_balance(session: &mut Session, contract_id: ContractId) {
             &(contract_id),
             POINT_LIMIT,
         )
-        .expect("getting allowance should succeed")
+        .expect("getting module balance succeed")
         .data;
     println!(
         "current balance of contract {} is {}",
@@ -743,13 +746,19 @@ fn charlie_free_call() {
     let ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
     let psk = PublicSpendKey::from(&ssk); // money giver to subsidize the sponsor
 
+    let ssk2 = SecretSpendKey::random(rng); // owner of the "free" note funds
+    let psk2 = PublicSpendKey::from(&ssk2); // owner of the "free" note funds
+
+    let test_sponsor_ssk = SecretSpendKey::random(rng);
+    let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
+
     let beneficiary_sk = SecretKey::random(rng); // secret key of the free riding user, not really used now
     let beneficiary_pk = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
 
     let sk = SignSecretKey::random(rng); // beneficiary of subsidizing
     let pk = SignPublicKey::from(&sk); // beneficiary of subsidizing
 
-    let mut session = &mut instantiate(rng, vm, &psk);
+    let mut session = &mut instantiate(rng, vm, &psk, Some(test_sponsor_psk));
     println!("instantiate done");
 
     charlie_subsidize(rng, &mut session, pk, sk, psk, ssk); // make sure that psk is owner of the sponsor contract
@@ -763,13 +772,16 @@ fn charlie_free_call() {
 
     let r = JubJubScalar::random(rng);
     let nonce = BlsScalar::random(&mut *rng);
-    let blinding_factor = JubJubScalar::random(rng);
+    let blinding_factor = JubJubScalar::zero();
+
+    println!("obtaining free ticket");
 
     let (funding_note, sponsor_psk) = session
         .call::<(
             ContractId,
             Vec<u8>,
             PublicKey,
+            PublicSpendKey,
             JubJubScalar,
             BlsScalar,
             JubJubScalar,
@@ -780,24 +792,34 @@ fn charlie_free_call() {
                 CHARLIE_CONTRACT_ID,
                 vec![],
                 beneficiary_pk,
+                psk2,
                 r,
                 nonce,
                 blinding_factor,
             ),
             POINT_LIMIT,
         )
-        .expect("getting allowance should succeed")
+        .expect("getting free ticket should succeed")
         .data;
 
-    let input_note = funding_note;
-    let input_value = input_note
+    update_root(session).expect("update root should succeed");
+
+    assert_eq!(sponsor_psk, test_sponsor_psk);
+    assert_eq!(sponsor_psk, PublicSpendKey::from(test_sponsor_ssk));
+
+    println!("free ticket obtained: note and sponsor psk");
+
+    let input_value = funding_note
         .value(None)
         .expect("The value should be transparent");
     println!("input value={}", input_value);
-    let input_blinder = input_note
+    let input_blinder = funding_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
-    let input_nullifier = input_note.gen_nullifier(&ssk);
+
+    assert_eq!(input_blinder, blinding_factor);
+
+    let input_nullifier = funding_note.gen_nullifier(&test_sponsor_ssk);
 
     let gas_limit = PING_FEE;
     let gas_price = LUX;
@@ -823,12 +845,12 @@ fn charlie_free_call() {
         .add_output_with_data(change_note, change_value, change_blinder)
         .expect("appending input or output should succeed");
 
-    let opening = opening(session, *input_note.pos())
+    let opening = opening(session, *funding_note.pos())
         .expect("Querying the opening for the given position should succeed")
         .expect("An opening should exist for a note in the tree");
 
     // Generate pk_r_p
-    let sk_r = ssk.sk_r(input_note.stealth_address());
+    let sk_r = test_sponsor_ssk.sk_r(funding_note.stealth_address());
     let pk_r_p = GENERATOR_NUMS_EXTENDED * sk_r.as_ref();
 
     // The transaction hash must be computed before signing
@@ -848,10 +870,10 @@ fn charlie_free_call() {
     circuit.set_tx_hash(tx_hash);
 
     let circuit_input_signature =
-        CircuitInputSignature::sign(rng, &ssk, &input_note, tx_hash);
+        CircuitInputSignature::sign(rng, &test_sponsor_ssk, &funding_note, tx_hash);
     let circuit_input = CircuitInput::new(
         opening,
-        input_note,
+        funding_note,
         pk_r_p.into(),
         input_value,
         input_blinder,
@@ -884,6 +906,8 @@ fn charlie_free_call() {
     update_root(session).expect("Updating the root should succeed");
 
     println!("EXECUTE_PING: {gas_spent} gas");
+
+    show_contract_balance(&mut session, CHARLIE_CONTRACT_ID);
 }
 
 #[test]
@@ -900,7 +924,7 @@ fn send_and_withdraw_transparent() {
     let vk = ssk.view_key();
     let psk = PublicSpendKey::from(&ssk);
 
-    let session = &mut instantiate(rng, vm, &psk);
+    let session = &mut instantiate(rng, vm, &psk, None);
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -1252,7 +1276,7 @@ fn send_and_withdraw_obfuscated() {
     let vk = ssk.view_key();
     let psk = PublicSpendKey::from(&ssk);
 
-    let session = &mut instantiate(rng, vm, &psk);
+    let session = &mut instantiate(rng, vm, &psk, None);
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
