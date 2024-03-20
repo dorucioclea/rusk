@@ -67,7 +67,6 @@ fn instantiate<Rng: RngCore + CryptoRng>(
     rng: &mut Rng,
     vm: &VM,
     psk: &PublicSpendKey,
-    charlie_owner: Option<PublicSpendKey>,
 ) -> Session {
     let transfer_bytecode = include_bytes!(
         "../../../target/wasm64-unknown-unknown/release/transfer_contract.wasm"
@@ -77,9 +76,6 @@ fn instantiate<Rng: RngCore + CryptoRng>(
     );
     let bob_bytecode = include_bytes!(
         "../../../target/wasm32-unknown-unknown/release/bob.wasm"
-    );
-    let charlie_bytecode = include_bytes!(
-        "../../../target/wasm32-unknown-unknown/release/charlie.wasm"
     );
 
     let mut session = rusk_abi::new_genesis_session(vm);
@@ -110,6 +106,52 @@ fn instantiate<Rng: RngCore + CryptoRng>(
         )
         .expect("Deploying the bob contract should succeed");
 
+    let genesis_note = Note::transparent(rng, psk, GENESIS_VALUE);
+
+    // push genesis note to the contract
+    session
+        .call::<_, Note>(
+            TRANSFER_CONTRACT,
+            "push_note",
+            &(0u64, genesis_note),
+            POINT_LIMIT,
+        )
+        .expect("Pushing genesis note should succeed");
+
+    update_root(&mut session).expect("Updating the root should succeed");
+
+    // sets the block height for all subsequent operations to 1
+    let base = session.commit().expect("Committing should succeed");
+
+    rusk_abi::new_session(vm, base, 1)
+        .expect("Instantiating new session should succeed")
+}
+
+fn instantiate_charlie<Rng: RngCore + CryptoRng>(
+    rng: &mut Rng,
+    vm: &VM,
+    psk: Option<PublicSpendKey>,
+    charlie_owner: Option<PublicSpendKey>,
+) -> Session {
+    let transfer_bytecode = include_bytes!(
+        "../../../target/wasm64-unknown-unknown/release/transfer_contract.wasm"
+    );
+    let charlie_bytecode = include_bytes!(
+        "../../../target/wasm32-unknown-unknown/release/charlie.wasm"
+    );
+
+    let mut session = rusk_abi::new_genesis_session(vm);
+
+    session
+        .deploy(
+            transfer_bytecode,
+            ContractData::builder()
+                .owner(OWNER)
+                .contract_id(TRANSFER_CONTRACT),
+            POINT_LIMIT,
+        )
+        .expect("Deploying the transfer contract should succeed");
+
     if let Some(charlie_owner) = charlie_owner {
         session
             .deploy(
@@ -122,17 +164,19 @@ fn instantiate<Rng: RngCore + CryptoRng>(
             .expect("Deploying the charlie contract should succeed");
     }
 
-    let genesis_note = Note::transparent(rng, psk, GENESIS_VALUE);
+    if let Some(psk) = psk {
+        let genesis_note = Note::transparent(rng, &psk, GENESIS_VALUE);
 
-    // push genesis note to the contract
-    session
-        .call::<_, Note>(
-            TRANSFER_CONTRACT,
-            "push_note",
-            &(0u64, genesis_note),
-            POINT_LIMIT,
-        )
-        .expect("Pushing genesis note should succeed");
+        // push genesis note to the contract
+        session
+            .call::<_, Note>(
+                TRANSFER_CONTRACT,
+                "push_note",
+                &(0u64, genesis_note),
+                POINT_LIMIT,
+            )
+            .expect("Pushing genesis note should succeed");
+    }
 
     update_root(&mut session).expect("Updating the root should succeed");
 
@@ -283,7 +327,7 @@ fn transfer() {
     let receiver_ssk = SecretSpendKey::random(rng);
     let receiver_psk = PublicSpendKey::from(&receiver_ssk);
 
-    let session = &mut instantiate(rng, vm, &psk, None);
+    let session = &mut instantiate(rng, vm, &psk);
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -435,7 +479,7 @@ fn alice_ping() {
     let ssk = SecretSpendKey::random(rng);
     let psk = PublicSpendKey::from(&ssk);
 
-    let session = &mut instantiate(rng, vm, &psk, None);
+    let session = &mut instantiate(rng, vm, &psk);
     println!("instantiate done");
 
     let leaves = leaves_from_height(session, 0)
@@ -546,9 +590,10 @@ fn alice_ping() {
     );
 }
 
-fn charlie_subsidize<R: RngCore + CryptoRng>(
+fn do_subsidize_contract<R: RngCore + CryptoRng>(
     rng: &mut R,
     mut session: &mut Session,
+    contract_id: ContractId,
     subsidy_keeper_pk: SignPublicKey,
     subsidy_keeper_sk: SignSecretKey,
     subsidizer_psk: PublicSpendKey,
@@ -635,7 +680,7 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
         .to_vec();
 
     let call = Some((
-        CHARLIE_CONTRACT_ID.to_bytes(),
+        contract_id.to_bytes(),
         String::from("subsidize"),
         stake_bytes,
     ));
@@ -722,7 +767,7 @@ fn charlie_subsidize<R: RngCore + CryptoRng>(
     println!("CHARLIE has been subsidized   : {gas_spent} gas");
 }
 
-fn show_contract_balance(session: &mut Session, contract_id: ContractId) {
+fn assert_contract_balance(session: &mut Session, contract_id: ContractId) {
     let balance = session
         .call::<ContractId, u64>(
             TRANSFER_CONTRACT,
@@ -737,55 +782,52 @@ fn show_contract_balance(session: &mut Session, contract_id: ContractId) {
         hex::encode(contract_id.to_bytes()),
         balance
     );
+    assert!(balance > 0)
 }
 
-#[test]
-fn charlie_free_call() {
-    const PING_FEE: u64 = dusk(1.0);
-
+fn subsidize_contract(vm: &mut VM, contract_id: ContractId) -> (Session, SecretSpendKey) {
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
 
-    let vm = &mut rusk_abi::new_ephemeral_vm()
-        .expect("Creating ephemeral VM should work");
-
     let subsidizer_ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
-    let subsidizer_psk = PublicSpendKey::from(&subsidizer_ssk); // money giver to subsidize the sponsor
+    let subsidizer_psk = PublicSpendKey::from(&subsidizer_ssk);
 
     let test_sponsor_ssk = SecretSpendKey::random(rng);
     let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
 
-    // beneficiary psk/ssk serve as id only, so that sponsor contract has to
-    // administer allowances, etc.
-    let beneficiary_sk = SecretKey::random(rng); // secret key of the free riding user, not really used now
-    let beneficiary_pk_as_id = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
+    let subsidy_keeper_sk = SignSecretKey::random(rng);
+    let subsidy_keeper_pk = SignPublicKey::from(&subsidy_keeper_sk);
 
-    let subsidy_keeper_sk = SignSecretKey::random(rng); // beneficiary of subsidizing
-    let subsidy_keeper_pk = SignPublicKey::from(&subsidy_keeper_sk); // beneficiary of subsidizing
-
-    // this will create and push a subsidizing note for the sponsor contract
-    // Charlie it will also deploy Charlie with test_sponsor_psk as owner
     let mut session =
-        &mut instantiate(rng, vm, &subsidizer_psk, Some(test_sponsor_psk));
-    println!("instantiate done");
-
-    // now we subsidize Charlie with funds from subsidizer_ssk/subsidizer_ssk,
-    // after this point subsidizer_ssk/subsidizer_ssk should not be needed
-    charlie_subsidize(
+        instantiate_charlie(rng, vm, Some(subsidizer_psk), Some(test_sponsor_psk));
+    do_subsidize_contract(
         rng,
         &mut session,
+        contract_id,
         subsidy_keeper_pk,
         subsidy_keeper_sk,
         subsidizer_psk,
         subsidizer_ssk,
     );
-    println!("subsidizing done");
 
-    // let's see if Charlie contract is properly subsidized
-    show_contract_balance(&mut session, CHARLIE_CONTRACT_ID);
+    assert_contract_balance(&mut session, contract_id);
 
-    // now that sponsor contract Charlie has been subsidized, meaning, it has
-    // now some funds we can ask it for allowance and try to execute a free
-    // call of one of its methods, say, ping
+    (session, test_sponsor_ssk)
+}
+
+fn call_contract_callee_pays(mut session: &mut Session, sponsor_contract_id: ContractId, method: impl AsRef<str>, test_sponsor_ssk: SecretSpendKey) {
+    const PING_FEE: u64 = dusk(1.0);
+
+    let rng = &mut StdRng::seed_from_u64(0xfeeb);
+
+    let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
+
+    // beneficiary psk/ssk serve as id only, so that sponsor contract can use them to
+    // keep track of allowances, onboard new users, etc.
+    let beneficiary_sk = SecretKey::random(rng); // secret key of the free riding user, not really used now
+    let beneficiary_pk_as_id = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
+
+    // make sure the sponsoring contract is properly subsidized (has funds)
+    assert_contract_balance(&mut session, sponsor_contract_id);
 
     let r = JubJubScalar::random(rng);
     let nonce = BlsScalar::random(&mut *rng);
@@ -803,7 +845,7 @@ fn charlie_free_call() {
             TRANSFER_CONTRACT,
             "free_ticket",
             &(
-                CHARLIE_CONTRACT_ID,
+                sponsor_contract_id,
                 vec![],
                 beneficiary_pk_as_id,
                 r,
@@ -819,12 +861,12 @@ fn charlie_free_call() {
     assert_eq!(sponsor_psk, test_sponsor_psk);
     assert_eq!(sponsor_psk, PublicSpendKey::from(test_sponsor_ssk));
 
-    println!("free ticket obtained: note and sponsor psk");
+    println!("free ticket has been obtained");
 
     let input_value = funding_note
         .value(None)
         .expect("The value should be transparent");
-    println!("input value={}", input_value);
+    println!("ticket value={}", input_value);
     let input_blinder = funding_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
@@ -845,7 +887,7 @@ fn charlie_free_call() {
         Note::obfuscated(rng, &sponsor_psk, change_value, change_blinder);
 
     let call =
-        Some((CHARLIE_CONTRACT_ID.to_bytes(), String::from("ping"), vec![]));
+        Some((sponsor_contract_id.to_bytes(), String::from(method.as_ref()), vec![]));
 
     // Compose the circuit. In this case we're using one input and one output.
     let mut circuit = ExecuteCircuitOneTwo::new();
@@ -921,7 +963,16 @@ fn charlie_free_call() {
 
     println!("EXECUTE_PING: {gas_spent} gas");
 
-    show_contract_balance(&mut session, CHARLIE_CONTRACT_ID);
+    assert_contract_balance(&mut session, sponsor_contract_id);
+}
+
+#[test]
+fn charlie_free_call() {
+    let vm = &mut rusk_abi::new_ephemeral_vm()
+        .expect("Creating ephemeral VM should work");
+
+    let (mut session, ssk) = subsidize_contract(vm, CHARLIE_CONTRACT_ID);
+    call_contract_callee_pays(&mut session, CHARLIE_CONTRACT_ID, "ping", ssk);
 }
 
 #[test]
@@ -938,7 +989,7 @@ fn send_and_withdraw_transparent() {
     let vk = ssk.view_key();
     let psk = PublicSpendKey::from(&ssk);
 
-    let session = &mut instantiate(rng, vm, &psk, None);
+    let session = &mut instantiate(rng, vm, &psk);
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -1290,7 +1341,7 @@ fn send_and_withdraw_obfuscated() {
     let vk = ssk.view_key();
     let psk = PublicSpendKey::from(&ssk);
 
-    let session = &mut instantiate(rng, vm, &psk, None);
+    let session = &mut instantiate(rng, vm, &psk);
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
