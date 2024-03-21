@@ -821,7 +821,6 @@ fn call_contract_callee_pays(
     const PING_FEE: u64 = dusk(1.0);
 
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
-
     let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
 
     // beneficiary psk/ssk serve as id only, so that sponsor contract can use
@@ -830,12 +829,12 @@ fn call_contract_callee_pays(
     let beneficiary_pk_as_id = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
 
     // make sure the sponsoring contract is properly subsidized (has funds)
-    let balance =
+    let contract_balance_before_free_call =
         assert_contract_balance(&mut session, sponsor_contract_id, PING_FEE);
     println!(
         "current balance of contract {} is {}",
         hex::encode(sponsor_contract_id.to_bytes()),
-        balance
+        contract_balance_before_free_call
     );
 
     let r = JubJubScalar::random(rng);
@@ -866,6 +865,10 @@ fn call_contract_callee_pays(
         .data;
 
     update_root(session).expect("update root should succeed");
+
+    let notes_balance_before_free_call =
+        ssk_balance(&mut session, test_sponsor_ssk)
+            .expect("getting ssk balance should succeed");
 
     assert_eq!(sponsor_psk, test_sponsor_psk);
     assert_eq!(sponsor_psk, PublicSpendKey::from(test_sponsor_ssk));
@@ -979,12 +982,61 @@ fn call_contract_callee_pays(
 
     println!("gas spent: {}", gas_spent);
 
-    let balance = assert_contract_balance(&mut session, sponsor_contract_id, 0);
+    let contract_balance_after_free_call =
+        assert_contract_balance(&mut session, sponsor_contract_id, 0);
     println!(
         "current balance of contract {} is {}",
         hex::encode(sponsor_contract_id.to_bytes()),
-        balance
+        contract_balance_after_free_call
     );
+
+    let notes_balance_after_free_call =
+        ssk_balance(&mut session, test_sponsor_ssk)
+            .expect("getting ssk balance should succeed");
+
+    println!();
+    println!(
+        "contract balance before free call={}",
+        contract_balance_before_free_call
+    );
+    println!(
+        "contract owner notes balance before free call={}",
+        notes_balance_before_free_call
+    );
+    println!(
+        "contract balance after free call={}",
+        contract_balance_after_free_call
+    );
+    println!(
+        "contract owner notes balance after free call={}",
+        notes_balance_after_free_call
+    );
+    let balance_difference = (contract_balance_before_free_call
+        + notes_balance_before_free_call)
+        - (contract_balance_after_free_call + notes_balance_after_free_call);
+    println!(
+        "balance difference={} should be equal to cost of the call={}",
+        balance_difference, gas_spent
+    );
+    assert_eq!(balance_difference, gas_spent)
+}
+
+fn ssk_balance(
+    session: &mut Session,
+    ssk: SecretSpendKey,
+) -> Result<u64, Error> {
+    let sponsor_vk = ssk.view_key();
+    let leaves = leaves_from_height(session, 0)?;
+    let mut balance = 0u64;
+    for leaf in leaves {
+        if sponsor_vk.owns(&leaf.note) {
+            balance += leaf
+                .note
+                .value(Some(&sponsor_vk))
+                .expect("Extracting value from note should succeed");
+        }
+    }
+    Ok(balance)
 }
 
 #[test]
