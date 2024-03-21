@@ -95,24 +95,20 @@ impl TransferState {
         //  2. B_a↦ = B_a↦ + v
         let contract_id = ContractId::from_bytes(stct.module);
         self.add_balance(contract_id, stct.value);
-        rusk_abi::debug!("TR stct - after add balance");
 
         //  3. if a.isPayable() ↦ true then continue
         let contract_id = ContractId::from_bytes(stct.module);
-        rusk_abi::debug!("TR stct - before payment info");
         match rusk_abi::payment_info(contract_id)
             .expect("Querying the payment info should succeed")
         {
             PaymentInfo::Transparent(_) | PaymentInfo::Any(_) => (),
             _ => panic!("The caller doesn't accept transparent notes"),
         }
-        rusk_abi::debug!("TR stct - after payment info");
 
         //  4. verify(C.c, v, π)
         let vd = verifier_data_stct();
         Self::assert_proof(vd, stct.proof, pi)
             .expect("Failed to verify the provided proof!");
-        rusk_abi::debug!("TR stct - after assert proof");
 
         //  5. C ← C(0,0,0)
         //  Crossover is already taken
@@ -332,7 +328,6 @@ impl TransferState {
         &mut self,
         tx: Transaction,
     ) -> Result<Vec<u8>, ContractError> {
-        rusk_abi::debug!("s&e");
         //  1. α ∈ R
         if !self.root_exists(&tx.anchor) {
             panic!("Anchor not found in the state!");
@@ -352,11 +347,6 @@ impl TransferState {
         //  5. N↦.append((No.R[], No.pk[])
         //  6. Notes.append(No[])
         let block_height = rusk_abi::block_height();
-        rusk_abi::debug!("s&e: extending tree with output notes, num outputs={} block_height={}", tx.outputs.len(), block_height);
-        rusk_abi::debug!(
-            "s&e: output notes pos={:?}",
-            tx.outputs.iter().map(|note| note.pos()).collect::<Vec<_>>()
-        );
         self.tree.extend_notes(block_height, tx.outputs.clone());
 
         //  7. g_l < 2^64
@@ -405,13 +395,11 @@ impl TransferState {
             .value(None)
             .expect("Should always succeed for a transparent note");
 
-        rusk_abi::debug!("TR refund (1)");
         if remainder_value > 0 {
             self.push_note(block_height, remainder);
         }
 
         if let Some(crossover) = self.var_crossover {
-            rusk_abi::debug!("TR refund (2)");
             let note = Note::from((fee, crossover));
             self.push_note(block_height, note);
         }
@@ -422,7 +410,6 @@ impl TransferState {
     /// Note: the method `update_root` needs to be called after the last note is
     /// pushed.
     pub fn push_note(&mut self, block_height: u64, note: Note) -> Note {
-        rusk_abi::debug!("TR push_note - height={}", block_height);
         let tree_leaf = TreeLeaf { block_height, note };
         let pos = self.tree.push(tree_leaf.clone());
         rusk_abi::emit("TREE_LEAF", (pos, tree_leaf));
@@ -476,7 +463,6 @@ impl TransferState {
         &self,
         nullifiers: Vec<BlsScalar>,
     ) -> Vec<BlsScalar> {
-        rusk_abi::debug!("TR existing_nullifiers");
         nullifiers
             .into_iter()
             .filter_map(|n| self.nullifiers.get(&n).map(|_| n))
@@ -490,11 +476,6 @@ impl TransferState {
 
     /// Add balance to the given contract
     pub fn add_balance(&mut self, contract: ContractId, value: u64) {
-        rusk_abi::debug!(
-            "TR add_balance - add_balance {} to contract id {:x?}",
-            value,
-            contract.to_bytes()
-        );
         match self.balances.entry(contract) {
             Entry::Vacant(ve) => {
                 ve.insert(value);
@@ -573,7 +554,6 @@ impl TransferState {
         // ({:x?})", rusk_abi::self_owner::<32>());
         // let psk = PublicSpendKey::from_bytes(&rusk_abi::self_owner()).ok()?;
 
-        rusk_abi::debug!("TR free_ticket - creating credit note");
         let credit_note = Note::deterministic(
             NoteType::Transparent,
             &r,
@@ -582,8 +562,6 @@ impl TransferState {
             allowance,
             JubJubScalar::zero(),
         );
-        rusk_abi::debug!("TR free_ticket - credit note created");
-
         let credit_note = self.push_note_current_height(credit_note);
         rusk_abi::debug!("TR free_ticket - credit note pushed");
 

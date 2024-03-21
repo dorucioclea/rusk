@@ -294,8 +294,7 @@ fn execute(session: &mut Session, tx: Transaction) -> Result<u64> {
         TRANSFER_CONTRACT,
         "spend_and_execute",
         &tx,
-        // u64::MAX,
-        tx.fee.gas_limit,
+        u64::MAX,
     )?;
 
     let gas_spent = receipt.gas_spent;
@@ -480,7 +479,6 @@ fn alice_ping() {
     let psk = PublicSpendKey::from(&ssk);
 
     let session = &mut instantiate(rng, vm, &psk);
-    println!("instantiate done");
 
     let leaves = leaves_from_height(session, 0)
         .expect("Getting leaves in the given range should succeed");
@@ -491,7 +489,6 @@ fn alice_ping() {
     let input_value = input_note
         .value(None)
         .expect("The value should be transparent");
-    println!("input value={}", input_value);
     let input_blinder = input_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
@@ -506,7 +503,6 @@ fn alice_ping() {
     // maximally spent.
     let change_value = input_value - gas_price * gas_limit;
     let change_blinder = JubJubScalar::random(rng);
-    println!("prepared change note with change value={}", change_value);
     let change_note = Note::obfuscated(rng, &psk, change_value, change_blinder);
 
     let call = Some((ALICE_ID.to_bytes(), String::from("ping"), vec![]));
@@ -574,9 +570,7 @@ fn alice_ping() {
         call,
     };
 
-    println!("before execute");
     let gas_spent = execute(session, tx).expect("Executing TX should succeed");
-    println!("after execute");
     update_root(session).expect("Updating the root should succeed");
 
     println!("EXECUTE_PING: {gas_spent} gas");
@@ -754,20 +748,21 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
         call,
     };
 
-    println!("executing subsidizing tx for CHARLIE");
+    println!("executing subsidizing transaction for Charlie");
 
-    let r = execute(&mut session, tx); //.expect("Executing TX should succeed");
-
-    println!("r={:?}", r);
-
-    let gas_spent = r.expect("Executing TX should succeed");
+    let gas_spent =
+        execute(&mut session, tx).expect("Executing TX should succeed");
 
     update_root(&mut session).expect("Updating the root should succeed");
 
-    println!("CHARLIE has been subsidized   : {gas_spent} gas");
+    println!("Charlie has been subsidized with amount={crossover_value} using {gas_spent} gas");
 }
 
-fn assert_contract_balance(session: &mut Session, contract_id: ContractId) {
+fn assert_contract_balance(
+    session: &mut Session,
+    contract_id: ContractId,
+    min_balance: u64,
+) -> u64 {
     let balance = session
         .call::<ContractId, u64>(
             TRANSFER_CONTRACT,
@@ -777,15 +772,14 @@ fn assert_contract_balance(session: &mut Session, contract_id: ContractId) {
         )
         .expect("getting module balance succeed")
         .data;
-    println!(
-        "current balance of contract {} is {}",
-        hex::encode(contract_id.to_bytes()),
-        balance
-    );
-    assert!(balance > 0)
+    assert!(balance > min_balance);
+    balance
 }
 
-fn subsidize_contract(vm: &mut VM, contract_id: ContractId) -> (Session, SecretSpendKey) {
+fn subsidize_contract(
+    vm: &mut VM,
+    contract_id: ContractId,
+) -> (Session, SecretSpendKey) {
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
 
     let subsidizer_ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
@@ -797,8 +791,12 @@ fn subsidize_contract(vm: &mut VM, contract_id: ContractId) -> (Session, SecretS
     let subsidy_keeper_sk = SignSecretKey::random(rng);
     let subsidy_keeper_pk = SignPublicKey::from(&subsidy_keeper_sk);
 
-    let mut session =
-        instantiate_charlie(rng, vm, Some(subsidizer_psk), Some(test_sponsor_psk));
+    let mut session = instantiate_charlie(
+        rng,
+        vm,
+        Some(subsidizer_psk),
+        Some(test_sponsor_psk),
+    );
     do_subsidize_contract(
         rng,
         &mut session,
@@ -809,25 +807,36 @@ fn subsidize_contract(vm: &mut VM, contract_id: ContractId) -> (Session, SecretS
         subsidizer_ssk,
     );
 
-    assert_contract_balance(&mut session, contract_id);
+    assert_contract_balance(&mut session, contract_id, 0);
 
     (session, test_sponsor_ssk)
 }
 
-fn call_contract_callee_pays(mut session: &mut Session, sponsor_contract_id: ContractId, method: impl AsRef<str>, test_sponsor_ssk: SecretSpendKey) {
+fn call_contract_callee_pays(
+    mut session: &mut Session,
+    sponsor_contract_id: ContractId,
+    method: impl AsRef<str>,
+    test_sponsor_ssk: SecretSpendKey,
+) {
     const PING_FEE: u64 = dusk(1.0);
 
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
 
     let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
 
-    // beneficiary psk/ssk serve as id only, so that sponsor contract can use them to
-    // keep track of allowances, onboard new users, etc.
+    // beneficiary psk/ssk serve as id only, so that sponsor contract can use
+    // them to keep track of allowances, onboard new users, etc.
     let beneficiary_sk = SecretKey::random(rng); // secret key of the free riding user, not really used now
     let beneficiary_pk_as_id = PublicKey::from(&beneficiary_sk); // identity of free riding user, not really used now but has to be passed
 
     // make sure the sponsoring contract is properly subsidized (has funds)
-    assert_contract_balance(&mut session, sponsor_contract_id);
+    let balance =
+        assert_contract_balance(&mut session, sponsor_contract_id, PING_FEE);
+    println!(
+        "current balance of contract {} is {}",
+        hex::encode(sponsor_contract_id.to_bytes()),
+        balance
+    );
 
     let r = JubJubScalar::random(rng);
     let nonce = BlsScalar::random(&mut *rng);
@@ -861,12 +870,13 @@ fn call_contract_callee_pays(mut session: &mut Session, sponsor_contract_id: Con
     assert_eq!(sponsor_psk, test_sponsor_psk);
     assert_eq!(sponsor_psk, PublicSpendKey::from(test_sponsor_ssk));
 
-    println!("free ticket has been obtained");
-
     let input_value = funding_note
         .value(None)
         .expect("The value should be transparent");
-    println!("ticket value={}", input_value);
+    println!(
+        "free ticket has been obtained, ticket value={}",
+        input_value
+    );
     let input_blinder = funding_note
         .blinding_factor(None)
         .expect("The blinder should be transparent");
@@ -886,8 +896,11 @@ fn call_contract_callee_pays(mut session: &mut Session, sponsor_contract_id: Con
     let change_note =
         Note::obfuscated(rng, &sponsor_psk, change_value, change_blinder);
 
-    let call =
-        Some((sponsor_contract_id.to_bytes(), String::from(method.as_ref()), vec![]));
+    let call = Some((
+        sponsor_contract_id.to_bytes(),
+        String::from(method.as_ref()),
+        vec![],
+    ));
 
     // Compose the circuit. In this case we're using one input and one output.
     let mut circuit = ExecuteCircuitOneTwo::new();
@@ -956,14 +969,22 @@ fn call_contract_callee_pays(mut session: &mut Session, sponsor_contract_id: Con
         call,
     };
 
-    println!("before execute");
+    println!(
+        "executing method {} (contract {} is paying)",
+        method.as_ref(),
+        hex::encode(sponsor_contract_id.to_bytes())
+    );
     let gas_spent = execute(session, tx).expect("Executing TX should succeed");
-    println!("after execute");
     update_root(session).expect("Updating the root should succeed");
 
-    println!("EXECUTE_PING: {gas_spent} gas");
+    println!("gas spent: {}", gas_spent);
 
-    assert_contract_balance(&mut session, sponsor_contract_id);
+    let balance = assert_contract_balance(&mut session, sponsor_contract_id, 0);
+    println!(
+        "current balance of contract {} is {}",
+        hex::encode(sponsor_contract_id.to_bytes()),
+        balance
+    );
 }
 
 #[test]

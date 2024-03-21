@@ -71,6 +71,10 @@ impl Charlie {
     ) -> (u64, [u8; PublicSpendKey::SIZE]) {
         const DEFAULT_ALLOWANCE: u64 = 10_000_000_000;
         let allowance = DEFAULT_ALLOWANCE;
+        rusk_abi::debug!(
+            "charlie - get_allowance - granting allowance {}",
+            allowance
+        );
         // here:
         // use the given hint and beneficiary pk to
         // determine the allowance
