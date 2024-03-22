@@ -4,7 +4,9 @@
 //
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
-use std::sync::mpsc;
+pub mod common;
+
+use crate::common::utils::*;
 
 use dusk_bls12_381::BlsScalar;
 use dusk_bls12_381_sign::{
@@ -12,20 +14,15 @@ use dusk_bls12_381_sign::{
 };
 use dusk_bytes::Serializable;
 use dusk_jubjub::{JubJubScalar, GENERATOR_NUMS_EXTENDED};
-use dusk_pki::{
-    Ownable, PublicKey, PublicSpendKey, SecretKey, SecretSpendKey, ViewKey,
-};
-use dusk_plonk::prelude::*;
+use dusk_pki::{Ownable, PublicKey, PublicSpendKey, SecretKey, SecretSpendKey};
 use ff::Field;
 use phoenix_core::transaction::*;
-use phoenix_core::{Fee, Message, Note};
-use poseidon_merkle::Opening as PoseidonOpening;
+use phoenix_core::{Fee, Note};
 use rand::rngs::StdRng;
 use rand::{CryptoRng, RngCore, SeedableRng};
 use rusk_abi::dusk::{dusk, LUX};
 use rusk_abi::{
-    ContractData, ContractError, ContractId, Error, Session, TRANSFER_CONTRACT,
-    VM,
+    ContractData, ContractId, Error, Session, TRANSFER_CONTRACT, VM,
 };
 use transfer_circuits::{
     CircuitInput, CircuitInputSignature, ExecuteCircuitOneTwo,
@@ -58,7 +55,7 @@ const OWNER: [u8; 32] = [0; 32];
 const H: usize = TRANSFER_TREE_DEPTH;
 const A: usize = 4;
 
-fn instantiate_charlie<Rng: RngCore + CryptoRng>(
+fn instantiate<Rng: RngCore + CryptoRng>(
     rng: &mut Rng,
     vm: &VM,
     psk: Option<PublicSpendKey>,
@@ -116,98 +113,6 @@ fn instantiate_charlie<Rng: RngCore + CryptoRng>(
 
     rusk_abi::new_session(vm, base, 1)
         .expect("Instantiating new session should succeed")
-}
-
-fn leaves_from_height(
-    session: &mut Session,
-    height: u64,
-) -> Result<Vec<TreeLeaf>> {
-    let (feeder, receiver) = mpsc::channel();
-
-    session.feeder_call::<_, ()>(
-        TRANSFER_CONTRACT,
-        "leaves_from_height",
-        &height,
-        feeder,
-    )?;
-
-    Ok(receiver
-        .iter()
-        .map(|bytes| rkyv::from_bytes(&bytes).expect("Should return leaves"))
-        .collect())
-}
-
-fn update_root(session: &mut Session) -> Result<()> {
-    session
-        .call(TRANSFER_CONTRACT, "update_root", &(), POINT_LIMIT)
-        .map(|r| r.data)
-}
-
-fn root(session: &mut Session) -> Result<BlsScalar> {
-    session
-        .call(TRANSFER_CONTRACT, "root", &(), POINT_LIMIT)
-        .map(|r| r.data)
-}
-
-fn module_balance(session: &mut Session, contract: ContractId) -> Result<u64> {
-    session
-        .call(TRANSFER_CONTRACT, "module_balance", &contract, POINT_LIMIT)
-        .map(|r| r.data)
-}
-
-fn opening(
-    session: &mut Session,
-    pos: u64,
-) -> Result<Option<PoseidonOpening<(), TRANSFER_TREE_DEPTH, 4>>> {
-    session
-        .call(TRANSFER_CONTRACT, "opening", &pos, POINT_LIMIT)
-        .map(|r| r.data)
-}
-
-fn prover_verifier(circuit_name: &str) -> (Prover, Verifier) {
-    let circuit_profile = rusk_profile::Circuit::from_name(circuit_name)
-        .expect(&format!(
-            "There should be circuit data stored for {}",
-            circuit_name
-        ));
-    let (pk, vd) = circuit_profile
-        .get_keys()
-        .expect(&format!("there should be keys stored for {}", circuit_name));
-
-    let prover = Prover::try_from_bytes(pk).unwrap();
-    let verifier = Verifier::try_from_bytes(vd).unwrap();
-
-    (prover, verifier)
-}
-
-fn filter_notes_owned_by<I: IntoIterator<Item = Note>>(
-    vk: ViewKey,
-    iter: I,
-) -> Vec<Note> {
-    iter.into_iter().filter(|note| vk.owns(note)).collect()
-}
-
-/// Executes a transaction, returning the gas spent.
-fn execute(session: &mut Session, tx: Transaction) -> Result<u64> {
-    let receipt = session.call::<_, Result<Vec<u8>, ContractError>>(
-        TRANSFER_CONTRACT,
-        "spend_and_execute",
-        &tx,
-        u64::MAX,
-    )?;
-
-    let gas_spent = receipt.gas_spent;
-
-    session
-        .call::<_, ()>(
-            TRANSFER_CONTRACT,
-            "refund",
-            &(tx.fee, gas_spent),
-            u64::MAX,
-        )
-        .expect("Refunding must succeed");
-
-    Ok(gas_spent)
 }
 
 fn do_subsidize_contract<R: RngCore + CryptoRng>(
@@ -374,14 +279,12 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
         call,
     };
 
-    println!("executing subsidizing transaction for Charlie");
-
     let gas_spent =
         execute(&mut session, tx).expect("Executing TX should succeed");
 
     update_root(&mut session).expect("Updating the root should succeed");
 
-    println!("Charlie has been subsidized with amount={crossover_value} using {gas_spent} gas");
+    println!("contract has been subsidized with amount={crossover_value} using {gas_spent} gas");
 }
 
 fn assert_contract_balance(
@@ -417,12 +320,8 @@ fn subsidize_contract(
     let subsidy_keeper_sk = SignSecretKey::random(rng);
     let subsidy_keeper_pk = SignPublicKey::from(&subsidy_keeper_sk);
 
-    let mut session = instantiate_charlie(
-        rng,
-        vm,
-        Some(subsidizer_psk),
-        Some(test_sponsor_psk),
-    );
+    let mut session =
+        instantiate(rng, vm, Some(subsidizer_psk), Some(test_sponsor_psk));
     do_subsidize_contract(
         rng,
         &mut session,
@@ -493,7 +392,7 @@ fn call_contract_callee_pays(
     update_root(session).expect("update root should succeed");
 
     let notes_balance_before_free_call =
-        ssk_balance(&mut session, test_sponsor_ssk)
+        vk_balance(&mut session, test_sponsor_ssk.view_key())
             .expect("getting ssk balance should succeed");
 
     assert_eq!(sponsor_psk, test_sponsor_psk);
@@ -617,7 +516,7 @@ fn call_contract_callee_pays(
     );
 
     let notes_balance_after_free_call =
-        ssk_balance(&mut session, test_sponsor_ssk)
+        vk_balance(&mut session, test_sponsor_ssk.view_key())
             .expect("getting ssk balance should succeed");
 
     println!();
@@ -645,24 +544,6 @@ fn call_contract_callee_pays(
         balance_difference, gas_spent
     );
     assert_eq!(balance_difference, gas_spent)
-}
-
-fn ssk_balance(
-    session: &mut Session,
-    ssk: SecretSpendKey,
-) -> Result<u64, Error> {
-    let sponsor_vk = ssk.view_key();
-    let leaves = leaves_from_height(session, 0)?;
-    let mut balance = 0u64;
-    for leaf in leaves {
-        if sponsor_vk.owns(&leaf.note) {
-            balance += leaf
-                .note
-                .value(Some(&sponsor_vk))
-                .expect("Extracting value from note should succeed");
-        }
-    }
-    Ok(balance)
 }
 
 #[test]
