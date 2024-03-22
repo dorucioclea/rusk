@@ -115,6 +115,9 @@ fn instantiate<Rng: RngCore + CryptoRng>(
         .expect("Instantiating new session should succeed")
 }
 
+/// Transfers value from the given note into the contract's account.
+/// Expects transparent funding the subsidy and a value which should be
+/// smaller or equal to the value of the note.
 fn do_subsidize_contract<R: RngCore + CryptoRng>(
     rng: &mut R,
     mut session: &mut Session,
@@ -123,14 +126,10 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     subsidy_keeper_sk: SignSecretKey,
     subsidizer_psk: PublicSpendKey,
     subsidizer_ssk: SecretSpendKey,
+    input_note: Note,
+    value: u64,
 ) {
-    let leaves = leaves_from_height(session, 0)
-        .expect("Getting leaves in the given range should succeed");
-
-    assert_eq!(leaves.len(), 1, "There should be one note in the state");
-
-    let input_note = leaves[0].note;
-    let input_value = input_note
+    let input_note_value = input_note
         .value(None)
         .expect("The value should be transparent");
     let input_blinder = input_note
@@ -141,10 +140,11 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     let gas_limit = dusk(1.0);
     let gas_price = LUX;
 
+    assert!(value <= input_note_value);
     // Since we're transferring value to a contract, a crossover is needed. Here
     // we transfer half of the input note to the stake contract, so the
     // crossover value is `input_value/2`.
-    let crossover_value = input_value / 2;
+    let crossover_value = value;
     let crossover_blinder = JubJubScalar::random(rng);
 
     let (mut fee, crossover) = Note::obfuscated(
@@ -161,7 +161,8 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
 
     // The change note should have the value of the input note, minus what is
     // maximally spent.
-    let change_value = input_value - crossover_value - gas_price * gas_limit;
+    let change_value =
+        input_note_value - crossover_value - gas_price * gas_limit;
     let change_blinder = JubJubScalar::random(rng);
     let change_note =
         Note::obfuscated(rng, &subsidizer_psk, change_value, change_blinder);
@@ -254,7 +255,7 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
         input_opening,
         input_note,
         pk_r_p.into(),
-        input_value,
+        input_note_value,
         input_blinder,
         input_nullifier,
         circuit_input_signature,
@@ -287,28 +288,12 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     println!("contract has been subsidized with amount={crossover_value} using {gas_spent} gas");
 }
 
-fn assert_contract_balance(
-    session: &mut Session,
-    contract_id: ContractId,
-    min_balance: u64,
-) -> u64 {
-    let balance = session
-        .call::<ContractId, u64>(
-            TRANSFER_CONTRACT,
-            "module_balance",
-            &(contract_id),
-            POINT_LIMIT,
-        )
-        .expect("getting module balance succeed")
-        .data;
-    assert!(balance > min_balance);
-    balance
-}
-
 fn subsidize_contract(
     vm: &mut VM,
     contract_id: ContractId,
 ) -> (Session, SecretSpendKey) {
+    const SUBSIDY_VALUE: u64 = GENESIS_VALUE / 2;
+
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
 
     let subsidizer_ssk = SecretSpendKey::random(rng); // money giver to subsidize the sponsor
@@ -322,6 +307,14 @@ fn subsidize_contract(
 
     let mut session =
         instantiate(rng, vm, Some(subsidizer_psk), Some(test_sponsor_psk));
+
+    let leaves = leaves_from_height(&mut session, 0)
+        .expect("Getting leaves in the given range should succeed");
+
+    assert_eq!(leaves.len(), 1, "There should be one note in the state");
+
+    let note = leaves[0].note;
+
     do_subsidize_contract(
         rng,
         &mut session,
@@ -330,9 +323,15 @@ fn subsidize_contract(
         subsidy_keeper_sk,
         subsidizer_psk,
         subsidizer_ssk,
+        note,
+        SUBSIDY_VALUE,
     );
 
-    assert_contract_balance(&mut session, contract_id, 0);
+    assert_eq!(
+        module_balance(&mut session, contract_id)
+            .expect("Module balance should succeed"),
+        SUBSIDY_VALUE
+    );
 
     (session, test_sponsor_ssk)
 }
@@ -355,7 +354,8 @@ fn call_contract_callee_pays(
 
     // make sure the sponsoring contract is properly subsidized (has funds)
     let contract_balance_before_free_call =
-        assert_contract_balance(&mut session, sponsor_contract_id, PING_FEE);
+        module_balance(&mut session, sponsor_contract_id)
+            .expect("Module balance should succeed");
     println!(
         "current balance of contract {} is {}",
         hex::encode(sponsor_contract_id.to_bytes()),
@@ -508,7 +508,8 @@ fn call_contract_callee_pays(
     println!("gas spent: {}", gas_spent);
 
     let contract_balance_after_free_call =
-        assert_contract_balance(&mut session, sponsor_contract_id, 0);
+        module_balance(&mut session, sponsor_contract_id)
+            .expect("Module balance should succeed");
     println!(
         "current balance of contract {} is {}",
         hex::encode(sponsor_contract_id.to_bytes()),
@@ -547,7 +548,7 @@ fn call_contract_callee_pays(
 }
 
 #[test]
-fn charlie_free_call() {
+fn call_at_contracts_expense() {
     let vm = &mut rusk_abi::new_ephemeral_vm()
         .expect("Creating ephemeral VM should work");
 
