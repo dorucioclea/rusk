@@ -277,7 +277,7 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     gas_spent
 }
 
-fn subsidize_contract(
+fn instantiate_and_subsidize_contract(
     vm: &mut VM,
     contract_id: ContractId,
 ) -> (Session, SecretSpendKey) {
@@ -304,6 +304,12 @@ fn subsidize_contract(
 
     let note = leaves[0].note;
 
+    assert_eq!(
+        module_balance(&mut session, contract_id)
+            .expect("Module balance should succeed"),
+        0u64
+    );
+
     let gas_spent = do_subsidize_contract(
         rng,
         &mut session,
@@ -316,7 +322,6 @@ fn subsidize_contract(
         SUBSIDY_VALUE,
     );
 
-
     assert_eq!(
         module_balance(&mut session, contract_id)
             .expect("Module balance should succeed"),
@@ -328,16 +333,16 @@ fn subsidize_contract(
     (session, test_sponsor_ssk)
 }
 
-fn call_contract_callee_pays(
+fn call_at_contracts_expense(
     mut session: &mut Session,
     sponsor_contract_id: ContractId,
     method: impl AsRef<str>,
-    test_sponsor_ssk: SecretSpendKey,
+    sponsor_ssk: SecretSpendKey,
 ) {
     const PING_FEE: u64 = dusk(1.0);
 
     let rng = &mut StdRng::seed_from_u64(0xfeeb);
-    let test_sponsor_psk = PublicSpendKey::from(&test_sponsor_ssk); // sponsor is Charlie's owner
+    let test_sponsor_psk = PublicSpendKey::from(&sponsor_ssk); // sponsor is Charlie's owner
 
     // beneficiary psk/ssk serve as id only, so that sponsor contract can use
     // them to keep track of allowances, onboard new users, etc.
@@ -384,11 +389,11 @@ fn call_contract_callee_pays(
     update_root(session).expect("update root should succeed");
 
     let notes_balance_before_free_call =
-        vk_balance(&mut session, test_sponsor_ssk.view_key())
+        vk_balance(&mut session, sponsor_ssk.view_key())
             .expect("getting ssk balance should succeed");
 
     assert_eq!(sponsor_psk, test_sponsor_psk);
-    assert_eq!(sponsor_psk, PublicSpendKey::from(test_sponsor_ssk));
+    assert_eq!(sponsor_psk, PublicSpendKey::from(sponsor_ssk));
 
     let input_value = funding_note
         .value(None)
@@ -401,7 +406,7 @@ fn call_contract_callee_pays(
         .blinding_factor(None)
         .expect("The blinder should be transparent");
 
-    let input_nullifier = funding_note.gen_nullifier(&test_sponsor_ssk);
+    let input_nullifier = funding_note.gen_nullifier(&sponsor_ssk);
 
     let gas_limit = PING_FEE;
     let gas_price = LUX;
@@ -435,7 +440,7 @@ fn call_contract_callee_pays(
         .expect("An opening should exist for a note in the tree");
 
     // Generate pk_r_p
-    let sk_r = test_sponsor_ssk.sk_r(funding_note.stealth_address());
+    let sk_r = sponsor_ssk.sk_r(funding_note.stealth_address());
     let pk_r_p = GENERATOR_NUMS_EXTENDED * sk_r.as_ref();
 
     // The transaction hash must be computed before signing
@@ -454,12 +459,8 @@ fn call_contract_callee_pays(
 
     circuit.set_tx_hash(tx_hash);
 
-    let circuit_input_signature = CircuitInputSignature::sign(
-        rng,
-        &test_sponsor_ssk,
-        &funding_note,
-        tx_hash,
-    );
+    let circuit_input_signature =
+        CircuitInputSignature::sign(rng, &sponsor_ssk, &funding_note, tx_hash);
     let circuit_input = CircuitInput::new(
         opening,
         funding_note,
@@ -509,7 +510,7 @@ fn call_contract_callee_pays(
     );
 
     let notes_balance_after_free_call =
-        vk_balance(&mut session, test_sponsor_ssk.view_key())
+        vk_balance(&mut session, sponsor_ssk.view_key())
             .expect("getting ssk balance should succeed");
 
     println!();
@@ -540,10 +541,16 @@ fn call_contract_callee_pays(
 }
 
 #[test]
-fn call_at_contracts_expense() {
+fn contract_sponsors_a_call() {
     let vm = &mut rusk_abi::new_ephemeral_vm()
         .expect("Creating ephemeral VM should work");
 
-    let (mut session, ssk) = subsidize_contract(vm, CHARLIE_CONTRACT_ID);
-    call_contract_callee_pays(&mut session, CHARLIE_CONTRACT_ID, "ping", ssk);
+    let (mut session, sponsor_ssk) =
+        instantiate_and_subsidize_contract(vm, CHARLIE_CONTRACT_ID);
+    call_at_contracts_expense(
+        &mut session,
+        CHARLIE_CONTRACT_ID,
+        "ping",
+        sponsor_ssk,
+    );
 }
