@@ -116,8 +116,9 @@ fn instantiate<Rng: RngCore + CryptoRng>(
 }
 
 /// Transfers value from the given note into the contract's account.
-/// Expects transparent funding the subsidy and a value which should be
-/// smaller or equal to the value of the note.
+/// Expects transparent note which will fund the subsidy and a value (amount)
+/// which should be smaller or equal to the value of the note.
+/// Returns the gas spent on the operation.
 fn do_subsidize_contract<R: RngCore + CryptoRng>(
     rng: &mut R,
     mut session: &mut Session,
@@ -127,8 +128,8 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     subsidizer_psk: PublicSpendKey,
     subsidizer_ssk: SecretSpendKey,
     input_note: Note,
-    value: u64,
-) {
+    crossover_value: u64,
+) -> u64 {
     let input_note_value = input_note
         .value(None)
         .expect("The value should be transparent");
@@ -140,11 +141,7 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     let gas_limit = dusk(1.0);
     let gas_price = LUX;
 
-    assert!(value <= input_note_value);
-    // Since we're transferring value to a contract, a crossover is needed. Here
-    // we transfer half of the input note to the stake contract, so the
-    // crossover value is `input_value/2`.
-    let crossover_value = value;
+    assert!(crossover_value <= input_note_value);
     let crossover_blinder = JubJubScalar::random(rng);
 
     let (mut fee, crossover) = Note::obfuscated(
@@ -159,15 +156,12 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
     fee.gas_limit = gas_limit;
     fee.gas_price = gas_price;
 
-    // The change note should have the value of the input note, minus what is
-    // maximally spent.
     let change_value =
         input_note_value - crossover_value - gas_price * gas_limit;
     let change_blinder = JubJubScalar::random(rng);
     let change_note =
         Note::obfuscated(rng, &subsidizer_psk, change_value, change_blinder);
 
-    // Prove the STCT circuit.
     let stct_address = rusk_abi::contract_to_scalar(&CHARLIE_CONTRACT_ID);
     let stct_signature = SendToContractTransparentCircuit::sign(
         rng,
@@ -211,7 +205,6 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
         stake_bytes,
     ));
 
-    // Compose the circuit. In this case we're using one input and one output.
     let mut execute_circuit = ExecuteCircuitOneTwo::new();
 
     execute_circuit.set_fee_crossover(
@@ -229,11 +222,9 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
         .expect("Querying the opening for the given position should succeed")
         .expect("An opening should exist for a note in the tree");
 
-    // Generate pk_r_p
     let sk_r = subsidizer_ssk.sk_r(input_note.stealth_address());
     let pk_r_p = GENERATOR_NUMS_EXTENDED * sk_r.as_ref();
 
-    // The transaction hash must be computed before signing
     let anchor =
         root(&mut session).expect("Getting the anchor should be successful");
 
@@ -282,10 +273,8 @@ fn do_subsidize_contract<R: RngCore + CryptoRng>(
 
     let gas_spent =
         execute(&mut session, tx).expect("Executing TX should succeed");
-
     update_root(&mut session).expect("Updating the root should succeed");
-
-    println!("contract has been subsidized with amount={crossover_value} using {gas_spent} gas");
+    gas_spent
 }
 
 fn subsidize_contract(
@@ -315,7 +304,7 @@ fn subsidize_contract(
 
     let note = leaves[0].note;
 
-    do_subsidize_contract(
+    let gas_spent = do_subsidize_contract(
         rng,
         &mut session,
         contract_id,
@@ -327,11 +316,14 @@ fn subsidize_contract(
         SUBSIDY_VALUE,
     );
 
+
     assert_eq!(
         module_balance(&mut session, contract_id)
             .expect("Module balance should succeed"),
         SUBSIDY_VALUE
     );
+
+    println!("contract has been subsidized with amount={SUBSIDY_VALUE} using {gas_spent} gas");
 
     (session, test_sponsor_ssk)
 }
