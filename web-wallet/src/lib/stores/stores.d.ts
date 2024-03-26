@@ -22,14 +22,19 @@ type WalletStoreServices = {
 
   clearLocalData: () => Promise<void>;
 
-  clearLocalDataAndInit: (wallet: Wallet) => Promise<void>;
+  clearLocalDataAndInit: (
+    wallet: Wallet,
+    syncFromBlock?: number
+  ) => Promise<void>;
+
+  getCurrentBlockHeight: () => Promise<number>;
 
   getStakeInfo: () => Promise<any> & ReturnType<Wallet["stakeInfo"]>;
 
   // The return type apparently is not in a promise here
   getTransactionsHistory: () => Promise<ReturnType<Wallet["history"]>>;
 
-  init: (wallet: Wallet) => Promise<void>;
+  init: (wallet: Wallet, syncFromBlock?: number) => Promise<void>;
 
   reset: () => void;
 
@@ -41,7 +46,7 @@ type WalletStoreServices = {
     gasLimit: number
   ) => Promise<any> & ReturnType<Wallet["stake"]>;
 
-  sync: () => Promise<void>;
+  sync: (from?: number) => Promise<void>;
 
   transfer: (
     to: string,

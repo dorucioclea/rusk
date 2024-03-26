@@ -6,6 +6,10 @@ class Wallet {
     this.wasm = {};
   }
 
+  static get networkBlockHeight() {
+    return Promise.resolve(0);
+  }
+
   gasLimit;
   gasPrice;
   seed;
