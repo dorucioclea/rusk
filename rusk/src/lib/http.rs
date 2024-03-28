@@ -20,6 +20,7 @@ pub(crate) use event::{
     RequestData, Target,
 };
 use hyper::http::{HeaderName, HeaderValue};
+use rusk_abi::Event;
 use tracing::info;
 
 use std::borrow::Cow;
@@ -175,6 +176,7 @@ async fn handle_stream<H: HandleRequest>(
     sources: Arc<H>,
     websocket: HyperWebsocket,
     target: Target,
+    mut block_events: broadcast::Receiver<Event>,
     mut shutdown: broadcast::Receiver<Infallible>,
 ) {
     let mut stream = match websocket.await {
@@ -206,6 +208,30 @@ async fn handle_stream<H: HandleRequest>(
                     reason: Cow::from("Shutting down"),
                 })).await;
                 break;
+            }
+
+            // If the block event stream produces an event, we handle it by
+            // sending it to the client.
+            event = block_events.recv() => {
+                // If the block event stream has stopped producing events, we
+                // send a close frame to the client and stop, since we're likely
+                // shutting down.
+                let event = match event {
+                    Ok(event) => event,
+                    Err(err) => {
+                        let _ = stream.close(Some(CloseFrame {
+                            code: CloseCode::Away,
+                            reason: Cow::from("Shutting down due to block event stream error"),
+                        })).await;
+                        break;
+                    },
+                };
+
+                let msg = EventResponse {
+                    data: event.into(),
+                    headers: serde_json::Map::new(),
+                    error: None,
+                };
             }
 
             rsp = responses.recv() => {
