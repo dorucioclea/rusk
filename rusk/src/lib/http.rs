@@ -227,6 +227,7 @@ async fn handle_stream<H: HandleRequest>(
                     },
                 };
 
+
                 let msg = EventResponse {
                     data: event.into(),
                     headers: serde_json::Map::new(),

@@ -8,8 +8,11 @@ use super::RUSK_VERSION_HEADER;
 use futures_util::{stream, StreamExt};
 use hyper::header::{InvalidHeaderName, InvalidHeaderValue};
 use hyper::Body;
+use rusk_abi::ContractId;
 use semver::{Version, VersionReq};
-use serde::{Deserialize, Serialize};
+use serde::de::{Error, MapAccess, Visitor};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_with::{self, serde_as};
 use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
@@ -162,6 +165,118 @@ impl MessageRequest {
             }
         }
         Ok(())
+    }
+}
+
+/// A contract event that is sent to a websocket client.
+pub struct ContractEvent {
+    pub source: ContractId,
+    pub topic: String,
+    pub data: Vec<u8>,
+}
+
+impl From<rusk_abi::Event> for ContractEvent {
+    fn from(event: rusk_abi::Event) -> Self {
+        Self {
+            source: event.source,
+            topic: event.topic,
+            data: event.data,
+        }
+    }
+}
+
+impl Serialize for ContractEvent {
+    fn serialize<S>(&self, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = s.serialize_map(Some(3))?;
+
+        let source_hex = hex::encode(&self.source.as_bytes());
+        map.serialize_entry("source", &source_hex)?;
+
+        map.serialize_entry("topic", &self.topic)?;
+
+        let data_hex = hex::encode(&self.data);
+        map.serialize_entry("data", &data_hex)?;
+
+        map.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ContractEvent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct ContractEventVisitor;
+
+        impl<'de> Visitor<'de> for ContractEventVisitor {
+            type Value = ContractEvent;
+
+            fn expecting(&self, formatter: &mut Formatter) -> std::fmt::Result {
+                formatter.write_str("a contract event")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut source = None;
+                let mut topic = None;
+                let mut data = None;
+
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        "source" => {
+                            let source_hex: String = map.next_value()?;
+
+                            let source_bytes = hex::decode(&source_hex)
+                                .map_err(|e| Error::custom(e))?;
+                            let mut source_array = [0u8; 32];
+
+                            if source_bytes.len() != 32 {
+                                return Err(Error::invalid_length(
+                                    source_hex.len(),
+                                    &"32",
+                                ));
+                            }
+
+                            source = Some(ContractId::from_bytes(source_array));
+                        }
+                        "topic" => {
+                            topic = Some(map.next_value()?);
+                        }
+                        "data" => {
+                            let data_hex: String = map.next_value()?;
+                            let data_bytes = hex::decode(&data_hex)
+                                .map_err(|e| Error::custom(e))?;
+                            data = Some(data_bytes);
+                        }
+                        _ => {
+                            return Err(Error::unknown_field(
+                                key,
+                                &["source", "topic", "data"],
+                            ));
+                        }
+                    }
+                }
+
+                let source =
+                    source.ok_or_else(|| Error::missing_field("source"))?;
+                let topic =
+                    topic.ok_or_else(|| Error::missing_field("topic"))?;
+                let data = data.ok_or_else(|| Error::missing_field("data"))?;
+
+                Ok(ContractEvent {
+                    source,
+                    topic,
+                    data,
+                })
+            }
+        }
+
+        deserializer.deserialize_map(ContractEventVisitor)
     }
 }
 
