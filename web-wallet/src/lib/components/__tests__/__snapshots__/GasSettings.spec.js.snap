@@ -45,7 +45,7 @@ exports[`GasSettings > renders the GasSettings component closed 1`] = `
       class="s-qWT2RqqjhEXG"
     >
       <button
-        class="dusk-button dusk-button--type--button dusk-button--variant--tertiary dusk-button--size--small"
+        class="dusk-button dusk-button--button dusk-button--tertiary dusk-button--small"
         type="button"
       >
         <span
@@ -106,7 +106,7 @@ exports[`GasSettings > renders the GasSettings component opened 1`] = `
       class="s-qWT2RqqjhEXG"
     >
       <button
-        class="dusk-button dusk-button--type--button dusk-button--variant--tertiary dusk-button--size--small"
+        class="dusk-button dusk-button--button dusk-button--tertiary dusk-button--small"
         type="button"
       >
         <span

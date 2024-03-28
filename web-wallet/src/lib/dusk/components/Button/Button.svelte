@@ -18,7 +18,7 @@
   export let size = "normal";
 
   /** @type {ButtonVariant} */
-  export let variant = "secondary";
+  export let variant = "primary";
 
   /** @type {String | Undefined} */
   export let text = undefined;
@@ -26,12 +26,16 @@
   /** @type {"button" | "reset" | "submit" | "toggle"} */
   export let type = "button";
 
+  /** @type {Boolean} */
+  export let alt = false;
+
   $: classes = makeClassName([
     "dusk-button",
-    `dusk-button--type--${type}`,
-    `dusk-button--variant--${variant}`,
-    `dusk-button--size--${size}`,
-    icon && text ? "dusk-icon-button-labeled" : icon ? "dusk-icon-button" : "",
+    `dusk-button--${type}`,
+    `dusk-button--${variant}`,
+    `dusk-button--${size}`,
+    alt ? "dusk-button--alt" : "",
+    icon && text ? "dusk-icon-button--labeled" : icon ? "dusk-icon-button" : "",
     type === "toggle" && active ? "dusk-button--type--toggle--active" : "",
     className,
   ]);

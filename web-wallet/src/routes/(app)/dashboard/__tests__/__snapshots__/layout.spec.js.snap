@@ -58,7 +58,7 @@ exports[`Dashboard Layout > should render the dashboard layout 1`] = `
           <a
             aria-disabled="false"
             aria-label="Settings"
-            class="dusk-anchor dusk-anchor-button dusk-anchor-button--variant--quaternary dusk-anchor-button--size--normal dusk-icon-button footer__anchor-button"
+            class="dusk-anchor dusk-anchor-button dusk-anchor-button--secondary dusk-anchor-button--normal dusk-anchor-button--alt dusk-icon-button"
             data-tooltip-id="main-tooltip"
             data-tooltip-text="Settings"
             href="/some-base-path/settings"
@@ -148,7 +148,7 @@ exports[`Dashboard Layout > should render the dashboard layout in the error stat
         >
           <button
             aria-label="Retry synchronization"
-            class="dusk-button dusk-button--type--button dusk-button--variant--quaternary dusk-button--size--normal dusk-icon-button footer__actions-button"
+            class="dusk-button dusk-button--button dusk-button--secondary dusk-button--normal dusk-button--alt dusk-icon-button footer__actions-button"
             data-tooltip-id="main-tooltip"
             data-tooltip-text="Retry synchronization"
             type="button"
@@ -172,7 +172,7 @@ exports[`Dashboard Layout > should render the dashboard layout in the error stat
           <a
             aria-disabled="false"
             aria-label="Settings"
-            class="dusk-anchor dusk-anchor-button dusk-anchor-button--variant--quaternary dusk-anchor-button--size--normal dusk-icon-button footer__anchor-button"
+            class="dusk-anchor dusk-anchor-button dusk-anchor-button--secondary dusk-anchor-button--normal dusk-anchor-button--alt dusk-icon-button"
             data-tooltip-id="main-tooltip"
             data-tooltip-text="Settings"
             href="/some-base-path/settings"
@@ -272,7 +272,7 @@ exports[`Dashboard Layout > should render the dashboard layout in the sync state
           <a
             aria-disabled="false"
             aria-label="Settings"
-            class="dusk-anchor dusk-anchor-button dusk-anchor-button--variant--quaternary dusk-anchor-button--size--normal dusk-icon-button footer__anchor-button"
+            class="dusk-anchor dusk-anchor-button dusk-anchor-button--secondary dusk-anchor-button--normal dusk-anchor-button--alt dusk-icon-button"
             data-tooltip-id="main-tooltip"
             data-tooltip-text="Settings"
             href="/some-base-path/settings"
