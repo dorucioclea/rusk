@@ -176,7 +176,6 @@ async fn handle_stream<H: HandleRequest>(
     sources: Arc<H>,
     websocket: HyperWebsocket,
     target: Target,
-    mut block_events: broadcast::Receiver<Event>,
     mut shutdown: broadcast::Receiver<Infallible>,
 ) {
     let mut stream = match websocket.await {
@@ -208,31 +207,6 @@ async fn handle_stream<H: HandleRequest>(
                     reason: Cow::from("Shutting down"),
                 })).await;
                 break;
-            }
-
-            // If the block event stream produces an event, we handle it by
-            // sending it to the client.
-            event = block_events.recv() => {
-                // If the block event stream has stopped producing events, we
-                // send a close frame to the client and stop, since we're likely
-                // shutting down.
-                let event = match event {
-                    Ok(event) => event,
-                    Err(err) => {
-                        let _ = stream.close(Some(CloseFrame {
-                            code: CloseCode::Away,
-                            reason: Cow::from("Shutting down due to block event stream error"),
-                        })).await;
-                        break;
-                    },
-                };
-
-
-                let msg = EventResponse {
-                    data: event.into(),
-                    headers: serde_json::Map::new(),
-                    error: None,
-                };
             }
 
             rsp = responses.recv() => {
@@ -394,7 +368,16 @@ where
     }
 }
 
-async fn handle_request<H>(
+// If the request is a WebSocket upgrade request, we upgrade the connection
+// and spawn a task to handle it. Each WebSocket connection has its own
+// associated UUID, which is used to identify the connection.
+//
+// If the request is not a WebSocket upgrade request, there are two
+// possibilities:
+//
+// 1. The request is a normal request (POST)
+// 2. The request is a (un)subscribe request to some WebSocket topic
+async fn handle_request_v2<H>(
     mut req: Request<Body>,
     mut shutdown: broadcast::Receiver<Infallible>,
     sources: Arc<H>,
@@ -404,6 +387,32 @@ where
 {
     if hyper_tungstenite::is_upgrade_request(&req) {
         let target = req.uri().path().try_into()?;
+
+        let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None)?;
+        task::spawn(handle_stream_v2(sources, websocket, target, shutdown));
+
+        Ok(response)
+    } else {
+    }
+}
+
+async fn handle_request<H>(
+    mut req: Request<Body>,
+    mut shutdown: broadcast::Receiver<Infallible>,
+    sources: Arc<H>,
+) -> Result<Response<Body>, ExecutionError>
+where
+    H: HandleRequest,
+{
+    let path = req.uri().path();
+
+    if path.starts_with("/v2") {
+        return handle_request_v2(req, shutdown, sources).await;
+    }
+
+    if hyper_tungstenite::is_upgrade_request(&req) {
+        let target = req.uri().path().try_into()?;
+
         let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None)?;
         task::spawn(handle_stream(sources, websocket, target, shutdown));
 
