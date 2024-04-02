@@ -280,6 +280,74 @@ pub fn deploy<P: AsRef<Path>>(
     Ok((vm, commit_id))
 }
 
+
+const CHARLIE_CONTRACT_ID: ContractId = {
+    let mut bytes = [0u8; 32];
+    bytes[0] = 0xFC;
+    ContractId::from_bytes(bytes)
+};
+const POINT_LIMIT: u64 = 0x10000000;
+
+use dusk_pki::SecretSpendKey;
+use dusk_bytes::Serializable;
+
+pub fn deploy2<P: AsRef<Path>>(
+    state_dir: P,
+    snapshot: &Snapshot,
+) -> Result<(VM, [u8; 32]), Box<dyn Error>> {
+    let theme = Theme::default();
+
+    let state_dir = state_dir.as_ref();
+    let state_id_path = rusk_profile::to_rusk_state_id_path(state_dir);
+
+    let (vm, old_commit_id) = match snapshot.base_state() {
+        Some(state) => load_state(state_dir, state),
+        None => generate_empty_state(state_dir, snapshot),
+    }?;
+
+    let mut session =
+        rusk_abi::new_session(&vm, old_commit_id, GENESIS_BLOCK_HEIGHT)?;
+
+    generate_transfer_state(&mut session, snapshot)?;
+    generate_stake_state(&mut session, snapshot)?;
+
+    for governance in snapshot.governance_contracts() {
+        deploy_governance_contract(&mut session, governance)?;
+    }
+
+    {
+        let charlie_bytecode = include_bytes!(
+            "../../target/wasm32-unknown-unknown/release/charlie.wasm"
+        );
+
+        let mut rng = StdRng::seed_from_u64(0xcafe);
+        let charlie_owner_ssk = SecretSpendKey::random(&mut rng);
+        let charlie_owner_psk = PublicSpendKey::from(&charlie_owner_ssk);
+
+        session
+            .deploy(
+                charlie_bytecode,
+                ContractData::builder()
+                    .owner(charlie_owner_psk.to_bytes())
+                    .contract_id(CHARLIE_CONTRACT_ID),
+                POINT_LIMIT,
+            )
+            .expect("Deploying the charlie contract should succeed");
+    }
+
+    info!("{} persisted id", theme.success("Storing"));
+    let commit_id = session.commit()?;
+    fs::write(state_id_path, commit_id)?;
+
+    if old_commit_id != commit_id {
+        vm.delete_commit(old_commit_id)?;
+    }
+
+    info!("{} {}", theme.action("Init Root"), hex::encode(commit_id));
+
+    Ok((vm, commit_id))
+}
+
 /// Restore a state from the given directory.
 pub fn restore_state<P: AsRef<Path>>(
     state_dir: P,

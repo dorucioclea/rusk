@@ -8,5 +8,5 @@ pub mod gas_behavior;
 pub mod multi_transfer;
 pub mod stake;
 pub mod transfer;
-
 pub mod unspendable;
+pub mod contract_pays;
