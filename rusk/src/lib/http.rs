@@ -321,6 +321,18 @@ async fn handle_stream<H: HandleRequest>(
     }
 }
 
+async fn handle_stream_v2<H: HandleRequest>(
+    sources: Arc<H>,
+    websocket: HyperWebsocket,
+    mut subscriptions: mpsc::Receiver<Subscription>,
+    mut shutdown: broadcast::Receiver<Infallible>,
+) {
+    let mut stream = match websocket.await {
+        Ok(stream) => stream,
+        Err(_) => return,
+    };
+}
+
 struct ExecutionService<H> {
     sources: Arc<H>,
     shutdown: broadcast::Receiver<Infallible>,
