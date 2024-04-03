@@ -5,14 +5,12 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 use crate::gadgets;
-use dusk_bytes::ParseHexStr;
 
-use dusk_pki::{Ownable, SecretKey, SecretSpendKey};
-use dusk_plonk::error::Error as PlonkError;
+use dusk_plonk::prelude::Error as PlonkError;
 use dusk_poseidon::cipher::PoseidonCipher;
 use dusk_poseidon::sponge;
-use dusk_schnorr::Signature;
-use phoenix_core::{Crossover, Fee};
+use jubjub_schnorr::{SecretKey as NoteSecretKey, Signature};
+use phoenix_core::{Crossover, Fee, Ownable, SecretKey};
 use rand_core::{CryptoRng, RngCore};
 
 use dusk_plonk::prelude::*;
@@ -40,9 +38,12 @@ impl Default for SendToContractTransparentCircuit {
         // This signature, while still being valid, is *totally bogus*. Since
         // `Circuit` requires the `Default` trait we have to come up with a
         // "default signature"
+        // TODO: not sure if a default signature doesn't break stuff here
+        use dusk_bytes::ParseHexStr;
         let signature =
             Signature::from_hex_str("40c83c7f8125fbf66ef33d30b0906eff3c23486a3cae720e16508e1fc30a110133d5d74ddf0f80803d545ae0a7cfe3156c2705aab52c27e4cdd8766bf01d218e")
-                .unwrap();
+        .unwrap();
+        // let signature = Signature::default();
 
         Self {
             signature,
@@ -97,18 +98,18 @@ impl SendToContractTransparentCircuit {
 
     pub fn sign<R: RngCore + CryptoRng>(
         rng: &mut R,
-        ssk: &SecretSpendKey,
+        sk: &SecretKey,
         fee: &Fee,
         crossover: &Crossover,
         value: u64,
         address: &BlsScalar,
     ) -> Signature {
-        let sk_r = *ssk.sk_r(fee.stealth_address()).as_ref();
-        let secret = SecretKey::from(sk_r);
+        let sk_r = *sk.sk_r(fee.stealth_address()).as_ref();
+        let secret = NoteSecretKey::from(sk_r);
 
         let message = Self::sign_message(crossover, value, address);
 
-        Signature::new(&secret, rng, message)
+        secret.sign(rng, message)
     }
 
     pub fn new(
@@ -146,19 +147,19 @@ impl SendToContractTransparentCircuit {
 
 #[allow(clippy::option_map_unit_fn)]
 impl Circuit for SendToContractTransparentCircuit {
-    fn circuit<C: Composer>(&self, composer: &mut C) -> Result<(), PlonkError> {
+    fn circuit(&self, composer: &mut Composer) -> Result<(), PlonkError> {
         // Witnesses
 
         let blinder = composer.append_witness(self.blinder);
         let nonce = composer.append_witness(self.nonce);
 
-        let mut cipher = [C::ZERO; PoseidonCipher::cipher_size()];
+        let mut cipher = [Composer::ZERO; PoseidonCipher::cipher_size()];
         self.cipher
             .iter()
             .zip(cipher.iter_mut())
             .for_each(|(c, w)| *w = composer.append_witness(*c));
 
-        let (schnorr_u, schnorr_r) = self.signature.to_witness(composer);
+        let (schnorr_u, schnorr_r) = self.signature.append(composer);
         let address = composer.append_witness(self.address);
 
         // Public inputs
@@ -172,7 +173,7 @@ impl Circuit for SendToContractTransparentCircuit {
         gadgets::commitment(composer, commitment, value, blinder)?;
 
         // 2. S == H(Cc,Cn,Cψ,Cv,A)
-        let mut s = [C::ZERO; MESSAGE_SIZE];
+        let mut s = [Composer::ZERO; MESSAGE_SIZE];
         let mut i_s = s.iter_mut();
 
         i_s.next().map(|s| *s = *commitment.x());

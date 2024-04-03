@@ -5,14 +5,12 @@
 // Copyright (c) DUSK NETWORK. All rights reserved.
 
 use crate::{gadgets, DeriveKey};
-use dusk_bytes::ParseHexStr;
 
-use dusk_pki::{Ownable, SecretKey, SecretSpendKey};
-use dusk_plonk::error::Error as PlonkError;
+use dusk_plonk::prelude::Error as PlonkError;
 use dusk_poseidon::cipher::PoseidonCipher;
 use dusk_poseidon::sponge;
-use dusk_schnorr::Signature;
-use phoenix_core::{Crossover, Fee, Message};
+use jubjub_schnorr::{SecretKey as NoteSecretKey, Signature};
+use phoenix_core::{Crossover, Fee, Message, Ownable, SecretKey};
 use rand_core::{CryptoRng, RngCore};
 
 use dusk_plonk::prelude::*;
@@ -89,9 +87,11 @@ impl Default for SendToContractObfuscatedCircuit {
         // This signature, while still being valid, is *totally bogus*. Since
         // `Circuit` requires the `Default` trait we have to come up with a
         // "default signature"
-        let signature =
-            Signature::from_hex_str("40c83c7f8125fbf66ef33d30b0906eff3c23486a3cae720e16508e1fc30a110133d5d74ddf0f80803d545ae0a7cfe3156c2705aab52c27e4cdd8766bf01d218e")
-                .unwrap();
+        // TODO: not sure if a default signature doesn't break stuff here
+        use dusk_bytes::ParseHexStr;
+        let signature = Signature::from_hex_str("40c83c7f8125fbf66ef33d30b0906eff3c23486a3cae720e16508e1fc30a110133d5d74ddf0f80803d545ae0a7cfe3156c2705aab52c27e4cdd8766bf01d218e")
+        .unwrap();
+        // let signature = Signature::default();
 
         Self {
             signature,
@@ -158,18 +158,18 @@ impl SendToContractObfuscatedCircuit {
 
     pub fn sign<R: RngCore + CryptoRng>(
         rng: &mut R,
-        crossover_ssk: &SecretSpendKey,
+        crossover_sk: &SecretKey,
         fee: &Fee,
         crossover: &Crossover,
         message: &Message,
         address: &BlsScalar,
     ) -> Signature {
-        let sk_r = *crossover_ssk.sk_r(fee.stealth_address()).as_ref();
-        let secret = SecretKey::from(sk_r);
+        let sk_r = *crossover_sk.sk_r(fee.stealth_address()).as_ref();
+        let secret = NoteSecretKey::from(sk_r);
 
         let message = Self::sign_message(crossover, message, address);
 
-        Signature::new(&secret, rng, message)
+        secret.sign(rng, message)
     }
 
     pub fn new(
@@ -202,8 +202,8 @@ impl SendToContractObfuscatedCircuit {
 
 #[allow(clippy::option_map_unit_fn)]
 impl Circuit for SendToContractObfuscatedCircuit {
-    fn circuit<C: Composer>(&self, composer: &mut C) -> Result<(), PlonkError> {
-        let zero = C::ZERO;
+    fn circuit(&self, composer: &mut Composer) -> Result<(), PlonkError> {
+        let zero = Composer::ZERO;
 
         // Witnesses
 
@@ -220,7 +220,7 @@ impl Circuit for SendToContractObfuscatedCircuit {
         let message_derive_key_secret_b =
             composer.append_point(self.message.derive_key.secret_b);
 
-        let (schnorr_u, schnorr_r) = self.signature.to_witness(composer);
+        let (schnorr_u, schnorr_r) = self.signature.append(composer);
 
         // Public inputs
 
@@ -278,7 +278,7 @@ impl Circuit for SendToContractObfuscatedCircuit {
         let message_derive_key_a = gadgets::identity_select_point(
             composer,
             message_derive_key_is_public,
-            C::IDENTITY,
+            Composer::IDENTITY,
             message_derive_key_public_a,
             message_derive_key_secret_a,
         );
@@ -286,7 +286,7 @@ impl Circuit for SendToContractObfuscatedCircuit {
         let message_derive_key_b = gadgets::identity_select_point(
             composer,
             message_derive_key_is_public,
-            C::IDENTITY,
+            Composer::IDENTITY,
             message_derive_key_public_b,
             message_derive_key_secret_b,
         );

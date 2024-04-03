@@ -8,8 +8,8 @@ use transfer_circuits::{
     DeriveKey, WfoChange, WfoCommitment, WithdrawFromObfuscatedCircuit,
 };
 
-use dusk_pki::SecretSpendKey;
-use phoenix_core::{Message, Note};
+use ff::Field;
+use phoenix_core::{Message, Note, PublicKey, SecretKey};
 use rand::rngs::StdRng;
 use rand::{CryptoRng, RngCore, SeedableRng};
 
@@ -23,16 +23,15 @@ fn create_random_circuit<R: RngCore + CryptoRng>(
     public_derive_key: bool,
 ) -> WithdrawFromObfuscatedCircuit {
     let input = {
-        let ssk = SecretSpendKey::random(rng);
-        let psk = ssk.public_spend_key();
+        let sk = SecretKey::random(rng);
+        let pk = PublicKey::from(sk);
 
         let value = 100;
-        let r = JubJubScalar::random(rng);
-        let message = Message::new(rng, &r, &psk, value);
+        let r = JubJubScalar::random(&mut *rng);
+        let message = Message::new(rng, &r, &pk, value);
 
-        let (_, blinder) = message
-            .decrypt(&r, &psk)
-            .expect("Failed to decrypt message");
+        let (_, blinder) =
+            message.decrypt(&r, &pk).expect("Failed to decrypt message");
         let commitment = *message.value_commitment();
         WfoCommitment {
             blinder,
@@ -41,19 +40,18 @@ fn create_random_circuit<R: RngCore + CryptoRng>(
         }
     };
     let change = {
-        let ssk = SecretSpendKey::random(rng);
-        let psk = ssk.public_spend_key();
+        let sk = SecretKey::random(rng);
+        let pk = PublicKey::from(sk);
 
         let value = 25;
-        let r = JubJubScalar::random(rng);
-        let message = Message::new(rng, &r, &psk, value);
-        let pk_r = *psk.gen_stealth_address(&r).pk_r().as_ref();
+        let r = JubJubScalar::random(&mut *rng);
+        let message = Message::new(rng, &r, &pk, value);
+        let pk_r = *pk.gen_stealth_address(&r).pk_r().as_ref();
 
-        let (_, blinder) = message
-            .decrypt(&r, &psk)
-            .expect("Failed to decrypt message");
+        let (_, blinder) =
+            message.decrypt(&r, &pk).expect("Failed to decrypt message");
 
-        let derive_key = DeriveKey::new(public_derive_key, &psk);
+        let derive_key = DeriveKey::new(public_derive_key, &pk);
         WfoChange {
             blinder,
             derive_key,
@@ -65,13 +63,13 @@ fn create_random_circuit<R: RngCore + CryptoRng>(
     };
 
     let output = {
-        let ssk = SecretSpendKey::random(rng);
-        let psk = ssk.public_spend_key();
+        let sk = SecretKey::random(rng);
+        let pk = PublicKey::from(sk);
 
         let value = 75;
 
-        let blinder = JubJubScalar::random(rng);
-        let output = Note::obfuscated(rng, &psk, value, blinder);
+        let blinder = JubJubScalar::random(&mut *rng);
+        let output = Note::obfuscated(rng, &pk, value, blinder);
         let commitment = *output.value_commitment();
         WfoCommitment {
             blinder,
