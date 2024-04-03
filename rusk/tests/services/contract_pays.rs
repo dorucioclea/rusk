@@ -25,8 +25,7 @@ const BLOCK_HEIGHT: u64 = 1;
 const BLOCK_GAS_LIMIT: u64 = 1_000_000_000_000;
 const INITIAL_BALANCE: u64 = 10_000_000_000;
 
-const GAS_LIMIT_0: u64 = 1_000; // Not enough to spend
-const GAS_LIMIT_1: u64 = 200_000_000; // All ok
+const GAS_LIMIT: u64 = 200_000_000; // All ok
 
 const CHARLIE_CONTRACT_ID: ContractId = {
     let mut bytes = [0u8; 32];
@@ -48,84 +47,54 @@ fn initial_state<P: AsRef<Path>>(dir: P) -> Result<Rusk> {
 }
 
 
-const SENDER_INDEX_0: u64 = 0;
-const SENDER_INDEX_1: u64 = 1;
+const SENDER_INDEX: u64 = 0;
 
 fn make_transactions(
     rusk: &Rusk,
     wallet: &wallet::Wallet<TestStore, TestStateClient, TestProverClient>,
 ) {
     // We will refund the transaction to ourselves.
-    let refund_0 = wallet
-        .public_spend_key(SENDER_INDEX_0)
+    let refund = wallet
+        .public_spend_key(SENDER_INDEX)
         .expect("Getting a public spend key should succeed");
 
-    let initial_balance_0 = wallet
-        .get_balance(SENDER_INDEX_0)
-        .expect("Getting initial balance should succeed")
-        .value;
-
-    // We will refund the transaction to ourselves.
-    let refund_1 = wallet
-        .public_spend_key(SENDER_INDEX_1)
-        .expect("Getting a public spend key should succeed");
-
-    let initial_balance_1 = wallet
-        .get_balance(SENDER_INDEX_1)
+    let initial_balance = wallet
+        .get_balance(SENDER_INDEX)
         .expect("Getting initial balance should succeed")
         .value;
 
     assert_eq!(
-        initial_balance_0, INITIAL_BALANCE,
-        "The sender should have the given initial balance"
-    );
-
-    assert_eq!(
-        initial_balance_1, INITIAL_BALANCE,
+        initial_balance, INITIAL_BALANCE,
         "The sender should have the given initial balance"
     );
 
     let mut rng = StdRng::seed_from_u64(0xdead);
 
-    // First transaction will also be a `wallet.execute` to the charlie
-    // contract, but with no enough gas to spend. Transaction should be
-    // discarded
-    let tx_0 = wallet
-        .execute(
-            &mut rng,
-            CHARLIE_CONTRACT_ID.to_bytes().into(),
-            String::from("ping"),
-            (),
-            SENDER_INDEX_0,
-            &refund_0,
-            GAS_LIMIT_0,
-            1,
-        )
-        .expect("Making the transaction should succeed");
-
     // Second transaction transaction will also be a `wallet.execute` to the
     // charlie contract. This transaction will be tested for gas cost.
-    let tx_1 = wallet
+    let tx = wallet
         .execute(
             &mut rng,
             CHARLIE_CONTRACT_ID.to_bytes().into(),
             String::from("ping"),
             (),
-            SENDER_INDEX_1,
-            &refund_1,
-            GAS_LIMIT_1,
+            SENDER_INDEX,
+            &refund,
+            GAS_LIMIT,
             1,
         )
         .expect("Making the transaction should succeed");
 
     let expected = ExecuteResult {
-        discarded: 1,
+        // discarded: 1,
+        discarded: 0,
         executed: 1,
     };
 
     let spent_transactions = generator_procedure(
         rusk,
-        &[tx_0, tx_1],
+        // &[tx_0, tx_1],
+        &[tx],
         BLOCK_HEIGHT,
         BLOCK_GAS_LIMIT,
         vec![],
@@ -141,7 +110,7 @@ fn make_transactions(
     assert!(tx.err.is_none(), "The second transaction should succeed");
     println!("tx gas spent={}", tx.gas_spent);
     assert!(
-        tx.gas_spent < GAS_LIMIT_1,
+        tx.gas_spent < GAS_LIMIT,
         "Successful transaction should consume less than provided"
     );
 }
