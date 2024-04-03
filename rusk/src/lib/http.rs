@@ -21,9 +21,10 @@ pub(crate) use event::{
 };
 use hyper::http::{HeaderName, HeaderValue};
 use rusk_abi::Event;
-use tracing::info;
+use tracing::{info, warn};
 
 use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -37,7 +38,7 @@ use async_trait::async_trait;
 
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::ToSocketAddrs;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, oneshot, RwLock};
 use tokio::{io, task};
 
 use hyper::server::conn::Http;
@@ -55,10 +56,13 @@ use futures_util::{SinkExt, StreamExt};
 use crate::chain::{Rusk, RuskNode};
 use crate::VERSION;
 
-use self::event::{MessageRequest, ResponseData};
+use self::event::{
+    ContractEvent, ContractSubscription, MessageRequest, ResponseData,
+};
 use self::stream::{Listener, Stream};
 
 const RUSK_VERSION_HEADER: &str = "Rusk-Version";
+const WS_ACTION_CHANNEL_SIZE: usize = 16;
 
 pub struct HttpServer {
     pub handle: task::JoinHandle<()>,
@@ -321,20 +325,10 @@ async fn handle_stream<H: HandleRequest>(
     }
 }
 
-async fn handle_stream_v2<H: HandleRequest>(
-    sources: Arc<H>,
-    websocket: HyperWebsocket,
-    mut subscriptions: mpsc::Receiver<Subscription>,
-    mut shutdown: broadcast::Receiver<Infallible>,
-) {
-    let mut stream = match websocket.await {
-        Ok(stream) => stream,
-        Err(_) => return,
-    };
-}
-
 struct ExecutionService<H> {
     sources: Arc<H>,
+    sockets_map: Arc<RwLock<HashMap<u128, mpsc::Sender<SubscriptionAction>>>>,
+    events: broadcast::Receiver<ContractEvent>,
     shutdown: broadcast::Receiver<Infallible>,
 }
 
@@ -366,10 +360,14 @@ where
     /// latter task running the stream handler loop is spawned.
     fn call(&mut self, mut req: Request<Body>) -> Self::Future {
         let sources = self.sources.clone();
+        let sockets_map = self.sockets_map.clone();
+        let events = self.events.resubscribe();
         let shutdown = self.shutdown.resubscribe();
 
         Box::pin(async move {
-            let response = handle_request(req, shutdown, sources).await;
+            let response =
+                handle_request(req, sources, sockets_map, events, shutdown)
+                    .await;
             response.or_else(|error| {
                 Ok(Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -377,6 +375,114 @@ where
                     .expect("Failed to build response"))
             })
         })
+    }
+}
+
+enum SubscriptionAction {
+    List(oneshot::Sender<Vec<ContractSubscription>>),
+    Subscribe(ContractSubscription),
+    Unsubscribe(ContractSubscription),
+}
+
+async fn handle_stream_v2(
+    sid: u128,
+    websocket: HyperWebsocket,
+    mut subscriptions: mpsc::Receiver<SubscriptionAction>,
+    mut events: broadcast::Receiver<ContractEvent>,
+    mut shutdown: broadcast::Receiver<Infallible>,
+) {
+    let mut stream = match websocket.await {
+        Ok(stream) => stream,
+        Err(_) => return,
+    };
+
+    let mut subscription_set = HashSet::new();
+
+    loop {
+        tokio::select! {
+            _ = shutdown.recv() => {
+                let _ = stream.close(Some(CloseFrame {
+                    code: CloseCode::Away,
+                    reason: Cow::from("Shutting down"),
+                })).await;
+                break;
+            }
+
+            subscription = subscriptions.recv() => {
+                let subscription = match subscription {
+                    Some(subscription) => subscription,
+                    None => {
+                        // If the subscription channel is closed, it means the server has stopped
+                        // communicating with this loop, so we should inform the client and stop.
+                        let _ = stream.close(Some(CloseFrame {
+                            code: CloseCode::Away,
+                            reason: Cow::from("Shutting down"),
+                        })).await;
+                        break;
+                    },
+                };
+
+                match subscription {
+                    SubscriptionAction::List(sender) => {
+                        let subscriptions = subscription_set.iter().cloned().collect();
+                        let _ = sender.send(subscriptions);
+                    },
+                    SubscriptionAction::Subscribe(subscription) => {
+                        subscription_set.insert(subscription);
+                    },
+                    SubscriptionAction::Unsubscribe(subscription) => {
+                        subscription_set.remove(&subscription);
+                    },
+                }
+            }
+
+            event = events.recv() => {
+                let event = match event {
+                    Ok(event) => event,
+                    Err(err) => {
+                        // If the event channel is closed, it means the server has stopped
+                        // producing events, so we should inform the client and stop.
+                        let _ = stream.close(Some(CloseFrame {
+                            code: CloseCode::Away,
+                            reason: Cow::from("Shutting down"),
+                        })).await;
+                        break;
+                    },
+                };
+
+                // The event is subscribed to if it matches any of the subscriptions.
+                let mut is_subscribed = false;
+                for sub in &subscription_set {
+                    if sub.matches(&event) {
+                        is_subscribed = true;
+                        break;
+                    }
+                }
+
+                // If the event is subscribed, we send it to the client.
+                if is_subscribed {
+                    let event = match serde_json::to_string(&event) {
+                        Ok(event) => event,
+                        // If we fail to serialize the event, we log the error
+                        // and continue processing further.
+                        Err(err) => {
+                            warn!("Failed serializing event: {err}");
+                            continue;
+                        }
+                    };
+
+                    // If the event fails sending we close the socket on the client
+                    // and stop processing further.
+                    if stream.send(Message::Text(event)).await.is_err() {
+                        let _ = stream.close(Some(CloseFrame {
+                            code: CloseCode::Error,
+                            reason: Cow::from("Failed sending event"),
+                        })).await;
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -389,37 +495,54 @@ where
 //
 // 1. The request is a normal request (POST)
 // 2. The request is a (un)subscribe request to some WebSocket topic
-async fn handle_request_v2<H>(
+async fn handle_request_v2(
     mut req: Request<Body>,
-    mut shutdown: broadcast::Receiver<Infallible>,
-    sources: Arc<H>,
-) -> Result<Response<Body>, ExecutionError>
-where
-    H: HandleRequest,
-{
+    sockets_map: Arc<RwLock<HashMap<u128, mpsc::Sender<SubscriptionAction>>>>,
+    events: broadcast::Receiver<ContractEvent>,
+    shutdown: broadcast::Receiver<Infallible>,
+) -> Result<Response<Body>, ExecutionError> {
     if hyper_tungstenite::is_upgrade_request(&req) {
-        let target = req.uri().path().try_into()?;
+        // This is a new WebSocket connection, so we generate a new random ID
+        // and create a new channel for it.
+        let sid = rand::random();
+        let (subscription_sender, subscriptions) =
+            mpsc::channel(WS_ACTION_CHANNEL_SIZE);
+
+        let mut sockets_map = sockets_map.write().await;
+        sockets_map.insert(sid, subscription_sender);
 
         let (response, websocket) = hyper_tungstenite::upgrade(&mut req, None)?;
-        task::spawn(handle_stream_v2(sources, websocket, target, shutdown));
+
+        task::spawn(handle_stream_v2(
+            sid,
+            websocket,
+            subscriptions,
+            events,
+            shutdown,
+        ));
 
         Ok(response)
     } else {
+        todo!("Handle event subscriptions");
     }
 }
 
 async fn handle_request<H>(
     mut req: Request<Body>,
-    mut shutdown: broadcast::Receiver<Infallible>,
     sources: Arc<H>,
+    sockets_map: Arc<RwLock<HashMap<u128, mpsc::Sender<SubscriptionAction>>>>,
+    events: broadcast::Receiver<ContractEvent>,
+    shutdown: broadcast::Receiver<Infallible>,
 ) -> Result<Response<Body>, ExecutionError>
 where
     H: HandleRequest,
 {
     let path = req.uri().path();
 
+    // If the request is a version 2 request, we handle it differently, as it is
+    // the contract events.
     if path.starts_with("/v2") {
-        return handle_request_v2(req, shutdown, sources).await;
+        return handle_request_v2(req, sockets_map, events, shutdown).await;
     }
 
     if hyper_tungstenite::is_upgrade_request(&req) {
